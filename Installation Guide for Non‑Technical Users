@@ -1,0 +1,36 @@
+1) Open your Copilot chat
+
+Go to the conversation you want to save:
+    Copilot Free → https://copilot.microsoft.com
+    Copilot 365 → https://www.microsoft365.com/copilot
+Make sure the full chat is visible on the screen.
+
+2) Open the browser tools
+Press:
+    Windows: F12
+    Mac: ⌥ Option + ⌘ Command + I
+A side panel will appear.
+Click the Console tab.
+
+3) Copy the script
+Choose the version you need:
+    Copilot 365 script
+    Copilot Free script
+Open the file, select all the text, and copy it.
+
+4) Paste the script into the Console
+Go back to the browser, click inside the Console, paste the script, and press Enter.
+The script will start running automatically.
+
+5) Wait for the export to finish
+The script will:
+    Scroll through the entire chat
+    Capture every message
+    Ask you to confirm two dates
+    Generate the export files
+
+When it finishes, your browser will download:
+    One HTML file (full chat)
+    One JSONL file (structured data)
+
+You’re done.
