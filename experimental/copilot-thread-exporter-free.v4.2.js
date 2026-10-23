@@ -131,7 +131,10 @@
     const turns=[...list.querySelectorAll(s.turn)];
     const anchor=t=>{
       const u=t.querySelector(s.user),b=t.querySelector(s.bot);
-      if(u)return position(u)||position(t);
+      if(u){
+        const p=position(u)||position(t);
+        return p&&b?p+1:p;
+      }
       if(b){
         const direct=position(b)||position(t);
         if(direct)return direct;
