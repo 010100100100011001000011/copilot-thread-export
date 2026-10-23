@@ -358,7 +358,7 @@
           externalLinks.set(href,{url:href,position:r.position,downloaded:false});
       }
     }
-    const userTitle=userTitle||(prompt("Enter the exact Copilot conversation title:","")||"").trim()||null;
+    const userTitle=chatTitle.value||(prompt("Enter the exact Copilot conversation title:","")||"").trim()||null;
     const duration=Date.now()-startMs;
     const elapsed=Math.floor(duration/60000)+" min "+((duration%60000)/1000).toFixed(1)+" s";
     const meta={
