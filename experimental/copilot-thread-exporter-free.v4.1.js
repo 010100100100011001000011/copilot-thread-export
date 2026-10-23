@@ -1,0 +1,255 @@
+/**
+ * Copilot Free Thread Exporter v4.1 (experimental)
+ * Paste into copilot.com F12 Console. Browser-only, no private APIs.
+ * Two full directional scans, gap recovery, attachment-aware user turns.
+ * Never upload conversation data. Browser download permissions still apply.
+ */
+(async () => {
+  "use strict";
+  const guard = "__copilotFreeExporterV41";
+  if (window[guard]) return console.warn("Exporter already running");
+  window[guard] = true;
+  const cfg = {delay:450,step:170,limit:900,stagnant:26,gapPasses:2,gapSteps:55,replyWait:1300};
+  const s = {
+    list:'[data-testid="MessageListContainer"]',
+    turn:'[data-testid="m365-chat-llm-web-ui-chat-message"]',
+    user:'[data-testid="chatQuestion"]',
+    bot:'[data-testid="markdown-reply"]',
+    attachment:'[data-testid="prompt-entity-list"]'
+  };
+  const list=document.querySelector(s.list);
+  if(!list){delete window[guard];return console.error("MessageListContainer not found");}
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  const records=new Map(), events=[];
+  let expected=0,step=0, scans=0, mutations=0, scheduled=false;
+  const start=new Date().toISOString();
+  const valid=n=>Number.isInteger(n)&&n>0&&n<100001;
+  const number=(e,a)=>{const n=Number(e?.getAttribute(a));return valid(n)?n:null;};
+  const htmlEscape=x=>String(x??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const position=e=>{
+    if(!e)return null;
+    const p=e.closest("[aria-posinset]")||e.querySelector("[aria-posinset]");
+    return p?number(p,"aria-posinset"):null;
+  };
+  const storageTime=e=>{
+    const raw=e?.getAttribute("data-storage-message-id");
+    if(!/^\d{13}$/.test(raw||""))return null;
+    const d=new Date(Number(raw));
+    return d.getUTCFullYear()>=2020&&d.getUTCFullYear()<=2100?d.toISOString():null;
+  };
+  function attachmentInfo(user){
+    if(!user)return [];
+    const found=[],seen=new Set();
+    const nodes=[...user.querySelectorAll(s.attachment)];
+    for(const node of nodes){
+      const parent=node.parentElement||node;
+      const near=parent.parentElement||parent;
+      const labels=[...near.querySelectorAll("[aria-label],[title]")].map(e=>e.getAttribute("aria-label")||e.getAttribute("title")||"");
+      const filename=labels.find(x=>/\.[a-z0-9]{2,8}$/i.test(x.trim()))||null;
+      const imgs=[...near.querySelectorAll("img")];
+      const candidate=imgs.find(i=>{
+        const src=i.getAttribute("src")||"";
+        return src.startsWith("data:")&&i.naturalWidth>100&&i.naturalHeight>100;
+      });
+      const src=candidate?.getAttribute("src")||null;
+      const id=[filename||"",src?.slice(0,70)||"",node.textContent?.slice(0,70)||""].join("|");
+      if(seen.has(id))continue;seen.add(id);
+      found.push({
+        filename,kind:src?"image":"file",mime_declared:src?.match(/^data:([^;,]+)/)?.[1]||null,
+        image_width:candidate?.naturalWidth||null,image_height:candidate?.naturalHeight||null,
+        image_data_uri:src,source:"DOM attachment entity",size_bytes:null,
+        note:src?"Rendered image data URI; original fidelity unverified":"Metadata only; source file not downloaded"
+      });
+    }
+    // Sometimes image attachment is rendered outside the prompt entity list.
+    if(!nodes.length){
+      const labels=[...user.querySelectorAll("[aria-label]")].map(e=>e.getAttribute("aria-label")||"");
+      for(const name of labels.filter(x=>/\.[a-z0-9]{2,8}$/i.test(x||""))){
+        if(!seen.has(name)){seen.add(name);found.push({filename:name,kind:"file",image_data_uri:null,source:"aria-label",size_bytes:null});}
+      }
+    }
+    return found;
+  }
+  function cleanHTML(el){
+    const clone=el.cloneNode(true);
+    clone.querySelectorAll('script,style,button,textarea,input,[role="button"]').forEach(n=>n.remove());
+    return clone.outerHTML;
+  }
+  function quality(r){
+    return (r.text?.length||0)+(r.html?.length||0)/5+
+      (r.attachments?.length||0)*4000+
+      (r.attachments||[]).filter(a=>a.image_data_uri).length*10000;
+  }
+  function put(el,role,pos,source){
+    if(!el)return;
+    const attachments=role==="user"?attachmentInfo(el):[];
+    const body=(el.textContent||"").trim();
+    const meaningful=!!body||attachments.length>0||!!el.querySelector("pre,code,table,img,svg");
+    if(!meaningful)return;
+    const id=el.getAttribute("data-message-id")||null;
+    const key=valid(pos)?"p:"+pos:id?"id:"+role+":"+id:null;
+    if(!key)return;
+    const record={
+      position:valid(pos)?pos:null,position_source:source,role,message_id:id,
+      storage_message_id:el.getAttribute("data-storage-message-id")||null,
+      message_timestamp:storageTime(el),text:body,
+      attachments,html:cleanHTML(el),first_seen_scan:scans,last_seen_scan:scans,
+      content_state:attachments.length&&!body?"attachment_only":attachments.length?"mixed":"text_or_markup"
+    };
+    const prior=records.get(key);
+    if(!prior){records.set(key,record);events.push({step,key,event:"new"});}
+    else {
+      prior.last_seen_scan=scans;
+      if(quality(record)>quality(prior)){
+        record.first_seen_scan=prior.first_seen_scan;
+        records.set(key,record);
+        events.push({step,key,event:"enriched"});
+      }
+    }
+  }
+  function scan(tag){
+    scans++;
+    for(const e of list.querySelectorAll("[aria-setsize]")){
+      const n=number(e,"aria-setsize");if(n)expected=Math.max(expected,n);
+    }
+    for(const turn of list.querySelectorAll(s.turn)){
+      const user=turn.querySelector(s.user),bot=turn.querySelector(s.bot);
+      const up=position(user),bp=position(bot),tp=position(turn);
+      const u=up||(user&&bp?bp-1:null)||(user?tp:null);
+      const b=bp||(bot&&u?u+1:null)||(!user&&bot?tp:null);
+      put(user,"user",u,up?"aria":"pair_or_turn_inference");
+      put(bot,"assistant",b,bp?"aria":"pair_or_turn_inference");
+    }
+    for(const e of list.querySelectorAll(s.user+","+s.bot)){
+      if(e.closest(s.turn))continue;
+      put(e,e.matches(s.user)?"user":"assistant",position(e),"aria");
+    }
+  }
+  function coverage(){
+    const positions=new Set([...records.values()].map(r=>r.position).filter(valid));
+    const missing=Array.from({length:Math.min(expected,10000)},(_,i)=>i+1).filter(p=>!positions.has(p));
+    return {expected,positioned:positions.size,records:records.size,missing};
+  }
+  function visible(){
+    const p=[...list.querySelectorAll("[aria-posinset]")].map(e=>number(e,"aria-posinset")).filter(valid);
+    return {min:p.length?Math.min(...p):null,max:p.length?Math.max(...p):null,top:list.scrollTop};
+  }
+  function edge(dir){
+    const els=[...list.querySelectorAll("[aria-posinset]")].filter(e=>number(e,"aria-posinset"));
+    els.sort((a,b)=>number(a,"aria-posinset")-number(b,"aria-posinset"));
+    return dir<0?els[0]:els.at(-1);
+  }
+  function move(dir){
+    const anchor=edge(dir)||list;
+    try{anchor.scrollIntoView({behavior:"instant",block:dir<0?"start":"end"});}catch{}
+    const scrollers=[];
+    for(let n=anchor;n;n=n.parentElement){
+      if(n.clientHeight>0&&n.scrollHeight>n.clientHeight+2)scrollers.push(n);
+    }
+    if(document.scrollingElement&&!scrollers.includes(document.scrollingElement))scrollers.push(document.scrollingElement);
+    for(const n of scrollers){try{n.scrollBy({top:dir*cfg.step,behavior:"instant"});}catch{}}
+    anchor.dispatchEvent(new WheelEvent("wheel",{bubbles:true,cancelable:true,deltaY:dir*cfg.step}));
+  }
+  async function traverse(dir,label,limit=cfg.limit){
+    let still=0;
+    for(let i=0;i<limit;i++){
+      step++;scan(label);const before=visible(),count=records.size;
+      move(dir);await wait(cfg.delay);scan(label);
+      const after=visible();
+      const changed=before.min!==after.min||before.max!==after.max||before.top!==after.top||count!==records.size;
+      still=changed?0:still+1;
+      if(i%20===0)console.log("[v4.1]",label,i,coverage());
+      if(still>=cfg.stagnant)break;
+    }
+    await wait(850);scan(label+":settle");
+  }
+  async function recover(){
+    for(let pass=0;pass<cfg.gapPasses;pass++){
+      const gaps=coverage().missing;
+      if(!gaps.length)break;
+      console.log("[v4.1] gap pass",pass+1,gaps);
+      // Move toward each missing position; additionally scan on either side.
+      for(const p of gaps){
+        if(records.has("p:"+p))continue;
+        let reached=false;
+        for(let i=0;i<cfg.gapSteps;i++){
+          const v=visible();
+          const dir=v.min===null||v.max===null?1:p<v.min?-1:p>v.max?1:(i%2?-1:1);
+          step++;move(dir);await wait(cfg.delay);scan("gap:"+p);
+          const n=visible();
+          if(n.min!==null&&n.min<=p&&n.max>=p){
+            reached=true;
+            await wait(cfg.replyWait);scan("gap:"+p+":settle");
+            if(records.has("p:"+p))break;
+          }
+        }
+        if(!reached)events.push({step,key:"p:"+p,event:"not_reached_in_gap_scan"});
+      }
+      await traverse(-1,"gap-reverse");
+      await traverse(1,"gap-forward");
+      if(coverage().missing.length>=gaps.length)break;
+    }
+  }
+  function ask(label,suggestion){
+    for(;;){
+      const v=prompt(label+" (YYYY-MM-DD, Cancel if unknown)",suggestion||"");
+      if(v==null||v.trim()==="")return null;
+      const d=new Date(v+"T00:00:00Z");
+      if(/^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(d)&&d.toISOString().slice(0,10)===v)return v;
+      alert("Use YYYY-MM-DD");
+    }
+  }
+  function download(content,type,name){
+    const url=URL.createObjectURL(new Blob([content],{type}));
+    const a=document.createElement("a");a.download=name;a.href=url;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }
+  let observer;
+  try{
+    observer=new MutationObserver(()=>{
+      mutations++;
+      if(scheduled)return;scheduled=true;
+      queueMicrotask(()=>{scheduled=false;scan("mutation");});
+    });
+    observer.observe(list,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:["aria-posinset","aria-setsize","data-storage-message-id"]});
+    scan("initial");
+    await traverse(-1,"seek-start");
+    await traverse(1,"forward-1");
+    await traverse(-1,"reverse-2");
+    await traverse(1,"forward-3");
+    await recover();
+    scan("final");
+    observer.disconnect();
+    const c=coverage(),sorted=[...records.values()].sort((a,b)=>(a.position??Infinity)-(b.position??Infinity));
+    const dates=sorted.map(x=>x.message_timestamp).filter(Boolean).sort();
+    // The ONLY user interaction happens at the end.
+    const first=ask("Confirm thread START date",dates[0]?.slice(0,10));
+    const last=ask("Confirm thread END date",dates.at(-1)?.slice(0,10));
+    const meta={
+      exporter_version:"4.1-experimental",status:c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":"PARTIAL",
+      expected_positions:c.expected,captured_positions:c.positioned,missing_positions:c.missing,
+      user_confirmed_start_date:first,user_confirmed_end_date:last,
+      earliest_timestamp_inferred:dates[0]||null,latest_timestamp_inferred:dates.at(-1)||null,
+      timestamp_note:"13-digit storage ID interpreted as epoch-ms; not independently validated",
+      attachments:sorted.reduce((n,r)=>n+r.attachments.length,0),
+      images_embedded:sorted.reduce((n,r)=>n+r.attachments.filter(a=>a.image_data_uri).length,0),
+      steps:step,scans,mutations,started_at:start,exported_at:new Date().toISOString(),
+      warning:"Position coverage alone does not verify completeness of code, tables, or attachments"
+    };
+    const slim=r=>({...r,html:undefined,attachments:r.attachments.map(a=>({...a,image_data_uri:undefined,embedded_in_html:!!a.image_data_uri}))});
+    const jsonl=JSON.stringify({type:"metadata",...meta})+"\n"+
+      sorted.map((r,i)=>JSON.stringify({order:i+1,...slim(r)})).join("\n")+"\n";
+    const style='body{font:14px/1.55 system-ui,sans-serif;max-width:1100px;margin:30px auto}article{border:1px solid #ccc;padding:16px;margin:20px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}img{max-width:100%;height:auto}figure{border:1px solid #ddd;padding:12px}';
+    const html='<!doctype html><html><head><meta charset="utf-8"><title>Copilot v4.1 export</title><style>'+style+'</style></head><body><h1>Copilot Thread v4.1</h1><pre>'+htmlEscape(JSON.stringify(meta,null,2))+'</pre>'+
+      sorted.map((r,i)=>'<article data-position="'+htmlEscape(r.position)+'"><h3>'+htmlEscape((i+1)+' / '+r.role+' / position '+r.position)+'</h3><small>'+htmlEscape(r.message_timestamp||"Timestamp unavailable")+'</small>'+
+        r.html+
+        (r.attachments.length?'<section><h4>Attachments</h4>'+r.attachments.map(a=>'<figure><figcaption>'+htmlEscape(a.filename||"Unnamed attachment")+'</figcaption>'+(a.image_data_uri?'<img alt="Attached image" src="'+htmlEscape(a.image_data_uri)+'">':'<p>Attachment metadata only; file content unavailable</p>')+'</figure>').join('')+'</section>':'')+
+        '</article>').join("\n")+'</body></html>';
+    const stamp=new Date().toISOString().replace(/[:.]/g,"-");
+    console.log("[v4.1] EXPORT RESULT",meta);
+    download(html,"text/html;charset=utf-8","copilot-v4.1_"+stamp+".html");
+    await wait(850);
+    download(jsonl,"application/x-ndjson;charset=utf-8","copilot-v4.1_"+stamp+".jsonl");
+  }catch(e){console.error("[v4.1] Export failed",e);}
+  finally{observer?.disconnect();delete window[guard];}
+})();
