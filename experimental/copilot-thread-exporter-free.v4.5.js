@@ -194,13 +194,31 @@
     return {expected,positioned:positions.size,records:records.size,missing,
       unpositioned_events:[...systemMessages.values()].filter(x=>!x.position).length};
   }
-  function gapsToRecover(){
-    const c=coverage();
-    if(c.missing.length>0&&c.missing.length===c.unpositioned_events){
-      console.info("[v4.5] Context-event count matches accessibility gaps. Skipping speculative repeated recovery; unverified positions will be reported.");
-      return [];
+  function reconcileContextPositions(){
+    const occupied=new Set([...records.values(),...systemMessages.values()].map(e=>e.position).filter(valid));
+    const groups=new Map();
+    for(const event of systemMessages.values()){
+      if(event.position||!valid(event.previous_position)||!valid(event.following_position))continue;
+      const key=event.previous_position+":"+event.following_position;
+      if(!groups.has(key))groups.set(key,[]);
+      groups.get(key).push(event);
     }
-    return c.missing;
+    for(const [key,events] of groups){
+      const [lo,hi]=key.split(":").map(Number);
+      const free=[];
+      for(let pos=lo+1;pos<hi;pos++)if(!occupied.has(pos))free.push(pos);
+      if(free.length!==events.length)continue;
+      events.sort((a,b)=>(a.first_seen_scan||0)-(b.first_seen_scan||0));
+      for(let i=0;i<events.length;i++){
+        events[i].position=free[i];
+        events[i].position_source="context_between_observed_neighbors";
+        occupied.add(free[i]);
+      }
+    }
+  }
+  function gapsToRecover(){
+    reconcileContextPositions();
+    return coverage().missing;
   }
   function visible(){
     const p=[...list.querySelectorAll("[aria-posinset]")].map(e=>number(e,"aria-posinset")).filter(valid);
@@ -311,6 +329,7 @@
     }
     scan("final");
     observer.disconnect();
+    reconcileContextPositions();
     const systemRows=[...systemMessages.values()].filter(x=>!x.position||!records.has("p:"+x.position));
     const c=coverage();
     const orderKey=r=>r.position??(r.previous_position&&r.following_position?
