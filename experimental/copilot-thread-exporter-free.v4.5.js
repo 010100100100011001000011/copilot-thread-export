@@ -362,8 +362,8 @@
     const duration=Date.now()-startMs;
     const elapsed=Math.floor(duration/60000)+" min "+((duration%60000)/1000).toFixed(1)+" s";
     const meta={
-      exporter_version:"4.4-experimental",status:!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":"PARTIAL",
-      chat_title:userTitle,chat_title_source:chatTitle.source,
+      exporter_version:"4.5-experimental",status:!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":"PARTIAL",
+      chat_title:userTitle,chat_title_source:chatTitle.value?chatTitle.source:(userTitle?"user_confirmed":"unavailable"),
       expected_positions:c.expected,captured_positions:c.positioned,missing_positions:c.missing,
       historical_elements_exported:sorted.length,
       accessibility_gaps_explained_by_event_count:!!(c.missing.length&&c.missing.length===c.unpositioned_events),
