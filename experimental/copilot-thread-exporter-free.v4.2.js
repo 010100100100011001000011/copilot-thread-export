@@ -132,7 +132,18 @@
     const anchor=t=>{
       const u=t.querySelector(s.user),b=t.querySelector(s.bot);
       if(u)return position(u)||position(t);
-      if(b)return position(b)||position(t);
+      if(b){
+        const direct=position(b)||position(t);
+        if(direct)return direct;
+        const idx=turns.indexOf(t);
+        const prev=turns.slice(0,idx).reverse().find(x=>x.querySelector(s.user)&&position(x.querySelector(s.user)));
+        const next=turns.slice(idx+1).find(x=>x.querySelector(s.user)&&position(x.querySelector(s.user)));
+        const before=prev?position(prev.querySelector(s.user)):null;
+        const after=next?position(next.querySelector(s.user)):null;
+        if(before&&after===before+2)return before+1;
+        if(before&&!after)return before+1;
+        if(after&&!before)return after-1;
+      }
       return null;
     };
     for(let i=0;i<turns.length;i++){
