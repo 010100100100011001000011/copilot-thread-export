@@ -218,7 +218,14 @@
   }
   function gapsToRecover(){
     reconcileContextPositions();
-    return coverage().missing;
+    const state=coverage();
+    if(state.missing.length&&state.missing.length===state.unpositioned_events){
+      // Exactly as many explicit system events as vacant accessibility
+      // indices. Do not cycle over these positions as though missing
+      // user/assistant messages. Preserve the index uncertainty in metadata.
+      return [];
+    }
+    return state.missing;
   }
   function visible(){
     const p=[...list.querySelectorAll("[aria-posinset]")].map(e=>number(e,"aria-posinset")).filter(valid);
@@ -361,8 +368,9 @@
     const userTitle=chatTitle.value||(prompt("Enter the exact Copilot conversation title:","")||"").trim()||null;
     const duration=Date.now()-startMs;
     const elapsed=Math.floor(duration/60000)+" min "+((duration%60000)/1000).toFixed(1)+" s";
+    const contextUnnumbered=c.missing.length>0&&c.missing.length===c.unpositioned_events;
     const meta={
-      exporter_version:"4.5-experimental",status:!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":"PARTIAL",
+      exporter_version:"4.5-experimental",status:!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":contextUnnumbered?"ALL_ITEMS_ACCOUNTED_CONTEXT_INDEX_UNVERIFIED":"PARTIAL",
       chat_title:userTitle,chat_title_source:chatTitle.value?chatTitle.source:(userTitle?"user_confirmed":"unavailable"),
       expected_positions:c.expected,captured_positions:c.positioned,missing_positions:c.missing,
       historical_elements_exported:sorted.length,
@@ -405,13 +413,14 @@
       'Download and save important attachments separately before deleting the original conversation.</p>'+
       '<p>System/context events captured: '+systemRows.length+
       '. Beginning verified: '+(startVerified?'yes':'NO')+
-      '. Unresolved positions: '+(c.missing.join(", ")||"none")+
+      '. Context events without numeric index: '+c.unpositioned_events+
+      '. Unresolved non-context positions: '+(gapsToRecover().join(", ")||"none")+
       '. Position coverage alone does not verify complete content.</p></section>';
     const html='<!doctype html><html><head><meta charset="utf-8"><title>'+htmlEscape(userTitle||"Copilot v4.5 export")+'</title><style>'+style+'</style></head><body><h1>'+htmlEscape(userTitle||"Copilot Thread v4.5")+'</h1>'+notice+'<pre>'+htmlEscape(JSON.stringify(meta,null,2))+'</pre>'+
       sorted.map((r,i)=>'<article data-position="'+htmlEscape(r.position)+'"><h3>'+htmlEscape((i+1)+' / '+r.role+' / position '+r.position)+'</h3><small>'+htmlEscape(r.message_timestamp||"Timestamp unavailable")+'</small>'+
         r.html+
         ((r.attachments||[]).length?'<section><h4>Attachments</h4>'+(r.attachments||[]).map(a=>'<figure><figcaption>'+htmlEscape(a.filename||"Unnamed attachment")+'</figcaption>'+(a.image_data_uri?'<img alt="Attached image" src="'+htmlEscape(a.image_data_uri)+'">':'<p>Attachment metadata only; file content unavailable</p>')+'</figure>').join('')+'</section>':'')+
-        '</article>').join("\n")+'</body></html>';
+        '</article>').join("\n")+'<footer style="margin:38px 0 15px;border-top:1px solid #bbb;padding-top:12px;color:#555;font-size:12px;text-align:center">Un servicio de <strong>Teclive</strong> que te hace la vida más fácil.</footer></body></html>';
     const stamp=new Date().toISOString().replace(/[:.]/g,"-");
     console.log("[v4.5] EXPORT RESULT",meta);
     download(html,"text/html;charset=utf-8","copilot-v4.5_"+stamp+".html");
