@@ -107,6 +107,20 @@ DOM selectors	Enterprise Copilot DOM	Public Copilot DOM
 Code block detection	data-testid="markdown-reply"	div[data-content="ai-message"]
 User message detection	fai-UserMessage__message	div[data-content="user-message"]
 Behavior	Identical engine	Identical engine
+## Compatibility, Maintenance and Reporting Issues
+
+**Microsoft Copilot is a changing web application.** Microsoft can change its HTML/DOM structure, message virtualization, image/attachment viewers, loading behavior, and service notices without advance notice. As a result, an exporter that works today may need updates to keep working reliably. This is a community-maintained, unofficial project, **not affiliated with or supported by Microsoft**. Compatibility with every Copilot account, interface, language or conversation cannot be guaranteed.
+
+**Before deleting any original conversation:** open the generated HTML, compare representative messages with the source, verify images, code blocks and attachments, and check the export's integrity warnings. A complete message count alone does **not** prove that every message body or attachment was captured. HTML image previews may differ from the originally uploaded files. Keep important originals separately.
+
+**If Copilot changes or an export stops working:** [open a GitHub Issue](https://github.com/010100100100011001000011/copilot-thread-export/issues) so the maintainer can investigate and, when feasible, publish a compatibility update. Please include:
+
+- Copilot version (Free web or Microsoft 365), browser and OS.
+- Date of the failure, exporter file/version and exact symptom (missing messages, broken images, code blocks, errors, or excessive runtime).
+- Sanitized console diagnostics, **without** conversation text, private URLs, authentication tokens, account details, personal documents or images.
+
+Never publish sensitive conversation exports or personal attachments to this public repository. Experimental scripts live on separate branches and are not automatically part of the stable `main` version.
+
 Troubleshooting
 Export stops early
 
