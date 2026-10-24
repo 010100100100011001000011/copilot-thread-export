@@ -801,13 +801,20 @@
     await seekRealStart();
     if(!startVerified)console.warn("[v5.8] Export will be marked PARTIAL: initial position not verified.");
     await traverse(1,"forward-main");
-    // Even with full position coverage, verify content on a second
-    // directional pass: virtualization can leave message bodies partial.
-    await traverse(-1,"fidelity-reverse");
-    await traverse(1,"fidelity-forward");
-    // Event discovery is cheap; do not spend minutes searching accessibility
-    // positions that known unindexed events may legitimately occupy.
     assignOutsidePositions();
+    const initial=coverage();
+    const codeHeavy=[...records.values()].some(r=>
+      /scriptor-codeblock-virtualized|data-line-index/i.test(r.html||""));
+    const unresolvedMedia=[...records.values()].some(r=>
+      (r.attachments||[]).some(a=>!a.image_data_uri&&
+        /\.(?:jpe?g|png|webp|gif|avif|bmp)$/i.test(a.filename||"")));
+    if(initial.missing.length||codeHeavy||unresolvedMedia){
+      console.log("[v5.8] recovery mode",{
+        missing:initial.missing.length,codeHeavy,unresolvedMedia});
+      await traverse(-1,"fidelity-reverse");
+      assignOutsidePositions();
+      if(coverage().missing.length)await traverse(1,"fidelity-forward");
+    }else console.log("[v5.8] standard mode: one indexed pass complete");
     if(startVerified&&gapsToRecover().length&&systemMessages.size===0)await recover();
     scan("final");
     observer.disconnect();
