@@ -166,7 +166,11 @@
     }else if(labels.length===1&&pixels.length>1){
       // One gallery/album chip can reveal multiple separate pictures.
       const name=labels[0].filename;
-      pixels.forEach((a,i)=>{a.filename=name+" · imagen "+(i+1);
+      const dot=name.lastIndexOf(".");
+      const basename=dot>0?name.slice(0,dot):name;
+      const ext=dot>0?name.slice(dot):".jpg";
+      pixels.forEach((a,i)=>{a.filename=basename+"__"+(i+1)+ext;
+        a.gallery_label=name;
         a.label_binding="group_gallery_association_not_original_filename";});
       record.attachments=items.filter(a=>a!==labels[0]);
     }
@@ -207,7 +211,10 @@
         .map(x=>x.currentSrc||x.src));
       const images=[],fingerprints=new Set();
       async function collect(){
-        for(const img of document.querySelectorAll("img")){
+        const dialogs=[...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')]
+          .filter(el=>el.getBoundingClientRect().width>150&&el.querySelector("img"));
+        const imgs=[...new Set(dialogs.flatMap(el=>[...el.querySelectorAll("img")]))];
+        for(const img of imgs){
           if(img.naturalWidth<160||img.naturalHeight<160||
              !img.getBoundingClientRect().width)continue;
           const url=img.currentSrc||img.getAttribute("src")||img.getAttribute("data-src");
@@ -261,7 +268,7 @@
       if(document.querySelector('[aria-modal="true"]'))return;
     }
   }
-  const imageKey=s=>(s||"").length+":"+(s||"").slice(-160);
+  const imageKey=s=>{const t=s||"",n=t.length,m=Math.floor(n/2);return n+":"+t.slice(0,80)+":"+t.slice(m,m+120)+":"+t.slice(-120);};
   async function optimizeForHTML(src){
     const uri=normalizeEmbeddedImage(src);
     if(!uri)return src;
