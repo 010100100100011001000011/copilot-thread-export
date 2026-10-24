@@ -185,14 +185,16 @@
       const unresolved=(record.attachments||[]).filter(a=>!a.image_data_uri&&
         /\.(?:jpe?g|png|webp|gif|avif|bmp)$/i.test(a.filename||""));
       const count=(record.attachments||[]).filter(a=>a.image_data_uri).length;
-      if(!unresolved.length||count>=unresolved.length)continue;
+      if(!unresolved.length||(unresolved.length>1&&count>=unresolved.length))continue;
       const label=unresolved[0].filename;
       const nodes=[...turn.querySelectorAll('[aria-label],[title],img,[role="button"],button')];
       const match=nodes.find(el=>
         (el.getAttribute("aria-label")||el.getAttribute("title")||"").includes(label));
-      if(!match)continue;
+      const imageThumb=[...turn.querySelectorAll("img")].find(img=>img.naturalWidth>=80&&img.naturalHeight>=80);
+      const chosen=match||imageThumb;
+      if(!chosen)continue;
       let trigger=null;
-      for(let n=match;n&&n!==turn;n=n.parentElement){
+      for(let n=chosen;n&&n!==turn;n=n.parentElement){
         if(n.tagName==="BUTTON"||n.getAttribute("role")==="button"||
           getComputedStyle(n).cursor==="pointer"){
           trigger=n;break;
@@ -209,7 +211,7 @@
           if(img.naturalWidth<160||img.naturalHeight<160||
              !img.getBoundingClientRect().width)continue;
           const url=img.currentSrc||img.getAttribute("src")||img.getAttribute("data-src");
-          if(!url||known.has(url))continue;
+          if(!url)continue;
           const uri=await recoverImage(url);
           if(!uri)continue;
           const fingerprint=imageKey(uri);
