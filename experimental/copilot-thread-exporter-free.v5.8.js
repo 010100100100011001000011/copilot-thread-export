@@ -70,8 +70,14 @@
       role:service?"service":role,source:match?"dictionary":"generic"};
   }
   function normalizeEmbeddedImage(url){
-    if(/^data:application\/octet-stream;base64,\/9j\//i.test(url||""))
-      return url.replace(/^data:application\/octet-stream/i,"data:image/jpeg");
+    if(/^data:application\/octet-stream;base64,/i.test(url||"")){
+      const payload=url.slice(url.indexOf(",")+1);
+      const mime=payload.startsWith("/9j/")?"image/jpeg":
+        payload.startsWith("iVBORw0KGgo")?"image/png":
+        payload.startsWith("R0lGOD")?"image/gif":
+        payload.startsWith("UklGR")?"image/webp":null;
+      if(mime)return url.replace(/^data:application\/octet-stream/i,"data:"+mime);
+    }
     return /^data:image\//i.test(url||"")?url:null;
   }
   function attachmentInfo(user){
@@ -300,6 +306,7 @@
       for(const attachment of record.attachments||[]){
         if(!attachment.image_data_uri)continue;
         const original=attachment.image_data_uri;
+        attachment.original_media_key=imageKey(original);
         attachment.original_dimensions=[attachment.image_width||null,attachment.image_height||null];
         attachment.image_data_uri=await optimizeForHTML(original);
         attachment.preview_optimized=attachment.image_data_uri.length<original.length;
@@ -314,6 +321,79 @@
       }
       record.html=template.innerHTML;
     }
+  }
+  function zipFromRecoveredMedia(sorted){
+    const encoder=new TextEncoder(),entries=[],catalog=[];
+    const normalizedName=x=>String(x||"image").replace(/[\\/:"*?<>|\x00-\x1f]/g,"_").slice(0,100);
+    for(const record of sorted){
+      let k=0;
+      for(const a of record.attachments||[]){
+        if(!a.original_media_key)continue;
+        const uri=originalMedia.get(a.original_media_key);
+        if(!uri||!uri.includes(";base64,"))continue;
+        const payload=uri.slice(uri.indexOf(",")+1);
+        let bytes;
+        try{
+          const binary=atob(payload);bytes=new Uint8Array(binary.length);
+          for(let j=0;j<binary.length;j++)bytes[j]=binary.charCodeAt(j);
+        }catch{continue;}
+        const suffix=/^data:image\/png/i.test(uri)?".png":
+          /^data:image\/webp/i.test(uri)?".webp":".jpg";
+        const label=normalizedName(a.filename||("image_"+(++k)+suffix));
+        const name="position_"+record.position+"/"+label;
+        entries.push({name,bytes});
+        catalog.push({position:record.position,name,bytes:bytes.length,
+          original_file_verified:false,
+          note:"Bytes recovered from browser image, may be preview/reencoded"});
+      }
+    }
+    const manifest=encoder.encode(JSON.stringify({
+      description:"Recovered media; no guarantee of original uploaded-file fidelity",
+      captured_entries:catalog,
+      unresolved_attachment_names:sorted.flatMap(r=>(r.attachments||[])
+        .filter(a=>!a.image_data_uri).map(a=>({position:r.position,name:a.filename||null})))
+    },null,2));
+    entries.push({name:"manifest.json",bytes:manifest});
+    const crc32=bytes=>{
+      let crc=-1;
+      for(let i=0;i<bytes.length;i++){
+        crc^=bytes[i];for(let j=0;j<8;j++)crc=(crc>>>1)^((crc&1)?0xEDB88320:0);
+      }
+      return (crc^(-1))>>>0;
+    };
+    const chunks=[],central=[];let offset=0,centralSize=0;
+    const part=(length)=>{const a=new Uint8Array(length);return {a,v:new DataView(a.buffer)};};
+    for(const item of entries){
+      const name=encoder.encode(item.name),bytes=item.bytes,crc=crc32(bytes);
+      const loc=part(30+name.length);
+      loc.v.setUint32(0,0x04034b50,true);
+      loc.v.setUint16(4,20,true);loc.v.setUint16(6,0x0800,true);
+      loc.v.setUint32(14,crc,true);
+      loc.v.setUint32(18,bytes.length,true);loc.v.setUint32(22,bytes.length,true);
+      loc.v.setUint16(26,name.length,true);loc.a.set(name,30);
+      chunks.push(loc.a,bytes);
+      const cd=part(46+name.length);
+      cd.v.setUint32(0,0x02014b50,true);
+      cd.v.setUint16(4,20,true);cd.v.setUint16(6,20,true);
+      cd.v.setUint16(8,0x0800,true);
+      cd.v.setUint32(16,crc,true);
+      cd.v.setUint32(20,bytes.length,true);cd.v.setUint32(24,bytes.length,true);
+      cd.v.setUint16(28,name.length,true);cd.v.setUint32(42,offset,true);
+      cd.a.set(name,46);central.push(cd.a);centralSize+=cd.a.length;
+      offset+=loc.a.length+bytes.length;
+    }
+    const end=part(22);
+    end.v.setUint32(0,0x06054b50,true);
+    end.v.setUint16(8,entries.length,true);end.v.setUint16(10,entries.length,true);
+    end.v.setUint32(12,centralSize,true);end.v.setUint32(16,offset,true);
+    return {blob:new Blob([...chunks,...central,end.a],{type:"application/zip"}),
+      images:catalog.length,catalog};
+  }
+  function downloadBlob(blob,name){
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.download=name;a.href=url;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
   }
   function cleanHTML(el){
     const clone=el.cloneNode(true);
@@ -826,6 +906,14 @@
     download(html,"text/html;charset=utf-8","copilot-v5.8_"+stamp+".html");
     await wait(850);
     download(jsonl,"application/x-ndjson;charset=utf-8","copilot-v5.8_"+stamp+".jsonl");
+    if(originalMedia.size){
+      const save=confirm("Guardar también un ZIP opcional con los bytes de imágenes recuperados (sin reducir)?");
+      if(save){
+        const archived=zipFromRecoveredMedia(sorted);
+        downloadBlob(archived.blob,"copilot-v5.8_"+stamp+"_media.zip");
+        console.log("[v5.8] ZIP contains",archived.images,"recovered image entries; uploaded originals not independently verified");
+      }
+    }
   }catch(e){console.error("[v5.8] Export failed",e);}
   finally{observer?.disconnect();delete window[guard];}
 })();
