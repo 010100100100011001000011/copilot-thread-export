@@ -165,6 +165,90 @@
     }
   }
   const optimizedMedia=new Map(), originalMedia=new Map();
+  const modalMedia=new Map(), modalAttempts=new Set();
+  async function harvestDeferredMedia(){
+    // Only inspect user turns currently mounted. A gallery may materialize
+    // its image bytes only AFTER opening its thumbnail.
+    const turns=[...list.querySelectorAll(s.user)];
+    for(const turn of turns){
+      const pos=position(turn);
+      if(!pos||modalAttempts.has(pos))continue;
+      const record=records.get("p:"+pos);
+      if(!record)continue;
+      const unresolved=(record.attachments||[]).filter(a=>!a.image_data_uri&&
+        /\.(?:jpe?g|png|webp|gif|avif|bmp)$/i.test(a.filename||""));
+      const count=(record.attachments||[]).filter(a=>a.image_data_uri).length;
+      if(!unresolved.length||count>=unresolved.length)continue;
+      const label=unresolved[0].filename;
+      const nodes=[...turn.querySelectorAll('[aria-label],[title],img,[role="button"],button')];
+      const match=nodes.find(el=>
+        (el.getAttribute("aria-label")||el.getAttribute("title")||"").includes(label));
+      if(!match)continue;
+      let trigger=null;
+      for(let n=match;n&&n!==turn;n=n.parentElement){
+        if(n.tagName==="BUTTON"||n.getAttribute("role")==="button"||
+          (n!==match&&getComputedStyle(n).cursor==="pointer")){
+          trigger=n;break;
+        }
+      }
+      if(!trigger||trigger.closest("a[href]"))continue;
+      modalAttempts.add(pos);
+      const known=new Set([...document.querySelectorAll("img")]
+        .filter(x=>x.getBoundingClientRect().width>0)
+        .map(x=>x.currentSrc||x.src));
+      const images=[],fingerprints=new Set();
+      async function collect(){
+        for(const img of document.querySelectorAll("img")){
+          if(turn.contains(img)||img.naturalWidth<160||img.naturalHeight<160||
+             !img.getBoundingClientRect().width)continue;
+          const url=img.currentSrc||img.getAttribute("src")||img.getAttribute("data-src");
+          if(!url||known.has(url))continue;
+          const uri=await recoverImage(url);
+          if(!uri)continue;
+          const fingerprint=imageKey(uri);
+          if(fingerprints.has(fingerprint))continue;
+          fingerprints.add(fingerprint);images.push({
+            filename:null,kind:"image",mime_declared:uri.slice(5,uri.indexOf(";")),
+            image_width:img.naturalWidth,image_height:img.naturalHeight,
+            image_data_uri:uri,image_source_url:url.startsWith("data:")?null:url,
+            source:"opened_attachment_viewer",
+            note:"Image retrieved from rendered viewer, not verified as device original",
+            size_bytes:null
+          });
+        }
+      }
+      try{
+        trigger.click();
+        await wait(450);await collect();
+        const dialog=[...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')]
+          .find(e=>e.getBoundingClientRect().width>150)||
+          [...document.querySelectorAll('[class*="lightbox"],[class*="viewer"]')]
+          .find(e=>e.getBoundingClientRect().width>150)||null;
+        // Gallery can contain more than one image behind a single file chip.
+        if(dialog){
+          for(let k=0;k<12;k++){
+            const next=[...dialog.querySelectorAll('button,[role="button"]')].find(el=>
+              /^(next|siguiente|avanti|suivant|weiter|prossima|next image|next photo)$/i.test(
+                (el.getAttribute("aria-label")||el.getAttribute("title")||"").trim()));
+            if(!next||next.disabled||next.getAttribute("aria-disabled")==="true")break;
+            const n=images.length;next.click();await wait(300);await collect();
+            if(images.length===n)break;
+          }
+          const close=[...dialog.querySelectorAll('button,[role="button"]')].find(el=>
+            /^(close|cerrar|chiudi|fermer|schließen|dismiss)$/i.test(
+              (el.getAttribute("aria-label")||el.getAttribute("title")||"").trim()));
+          if(close)close.click();
+          else document.dispatchEvent(new KeyboardEvent("keydown",
+            {key:"Escape",code:"Escape",bubbles:true}));
+        }
+        if(images.length)modalMedia.set(pos,images);
+        console.log("[v5.8] deferred image viewer",{
+          position:pos,images_recovered:images.length,opened:!!dialog});
+      }catch(err){console.warn("[v5.8] viewer capture unavailable",pos,String(err));}
+      // Do not try further clickable controls while a viewer remains open.
+      if(document.querySelector('[aria-modal="true"]'))return;
+    }
+  }
   const imageKey=s=>(s||"").length+":"+(s||"").slice(-160);
   async function optimizeForHTML(src){
     const uri=normalizeEmbeddedImage(src);
@@ -197,6 +281,15 @@
   }
   async function embedImages(){
     for(const record of records.values()){
+      const recovered=modalMedia.get(record.position)||[];
+      const present=new Set((record.attachments||[]).filter(a=>a.image_data_uri)
+        .map(a=>imageKey(a.image_data_uri)));
+      for(const a of recovered){
+        if(!present.has(imageKey(a.image_data_uri))){
+          record.attachments.push(a);
+          present.add(imageKey(a.image_data_uri));
+        }
+      }
       for(const attachment of record.attachments||[]){
         if(!attachment.image_data_uri){
           const uri=await recoverImage(attachment.image_source_url);
@@ -529,6 +622,7 @@
     let still=0;
     for(let i=0;i<limit;i++){
       step++;scan(label);const before=visible(),count=records.size;
+      await harvestDeferredMedia();
       move(dir);await wait(cfg.delay);scan(label);
       const after=visible();
       const changed=before.min!==after.min||before.max!==after.max||before.top!==after.top||count!==records.size;
