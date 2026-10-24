@@ -235,7 +235,7 @@
         if(dialog){
           for(let k=0;k<12;k++){
             const next=[...dialog.querySelectorAll('button,[role="button"]')].find(el=>
-              /^(next|siguiente|avanti|suivant|weiter|prossima|next image|next photo)$/i.test(
+              /next|siguiente|avanti|suivant|weiter|prossim|sucessiv|→|›/i.test(
                 (el.getAttribute("aria-label")||el.getAttribute("title")||"").trim()));
             if(!next||next.disabled||next.getAttribute("aria-disabled")==="true")break;
             const n=images.length;next.click();await wait(300);await collect();
@@ -246,6 +246,9 @@
               (el.getAttribute("aria-label")||el.getAttribute("title")||"").trim()));
           if(close)close.click();
           else document.dispatchEvent(new KeyboardEvent("keydown",
+            {key:"Escape",code:"Escape",bubbles:true}));
+        }else{
+          document.dispatchEvent(new KeyboardEvent("keydown",
             {key:"Escape",code:"Escape",bubbles:true}));
         }
         if(images.length)modalMedia.set(pos,images);
