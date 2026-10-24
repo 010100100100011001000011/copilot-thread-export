@@ -22,7 +22,7 @@
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
   const records=new Map(), events=[], systemMessages=new Map();
   let expected=0,step=0, scans=0, mutations=0, scheduled=false, startVerified=false;
-  const outsideKeys=new WeakMap();let outsideSerial=0;
+  const outsideKeys=new WeakMap();let outsideSerial=0;let outsideConsolidated=false;
   const startMs=Date.now();
   function getChatTitle(){
     const selectors=['[data-testid="conversation-title"]','[data-testid="chat-title"]','[data-testid="thread-title"]'];
@@ -210,6 +210,7 @@
   // Copilot may render quota-limited turns outside MessageListContainer,
   // without aria-posinset or regular turn wrappers.
   function scanOutsideList(){
+    if(outsideConsolidated)return;
     // DOM-wide, including INSIDE MessageListContainer: exceptions can be
     // unindexed children of that list. Recognize observations, not language.
     const nodes=[...document.querySelectorAll('[data-testid="chatOutput"],span')];
@@ -277,6 +278,7 @@
         // canonical four records. Keep original DOM text & provenance.
         for(const [k,r] of systemMessages){if(Number.isInteger(r.outside_sequence))systemMessages.delete(k);}
         items.forEach((r,i)=>systemMessages.set("canonical_outside:"+i,r));
+        outsideConsolidated=true;
         return true;
       }
     }
