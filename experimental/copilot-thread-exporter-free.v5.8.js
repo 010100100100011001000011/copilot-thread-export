@@ -23,6 +23,7 @@
   const records=new Map(), events=[], systemMessages=new Map();
   let expected=0,step=0, scans=0, mutations=0, scheduled=false, startVerified=false;
   const outsideKeys=new WeakMap();let outsideSerial=0;let outsideConsolidated=false;
+  const outsideSnapshots=[];
   const startMs=Date.now();
   function getChatTitle(){
     const selectors=['[data-testid="conversation-title"]','[data-testid="chat-title"]','[data-testid="thread-title"]'];
@@ -193,7 +194,7 @@
       let trigger=null;
       for(let n=match;n&&n!==turn;n=n.parentElement){
         if(n.tagName==="BUTTON"||n.getAttribute("role")==="button"||
-          (n!==match&&getComputedStyle(n).cursor==="pointer")){
+          getComputedStyle(n).cursor==="pointer"){
           trigger=n;break;
         }
       }
@@ -205,7 +206,7 @@
       const images=[],fingerprints=new Set();
       async function collect(){
         for(const img of document.querySelectorAll("img")){
-          if(turn.contains(img)||img.naturalWidth<160||img.naturalHeight<160||
+          if(img.naturalWidth<160||img.naturalHeight<160||
              !img.getBoundingClientRect().width)continue;
           const url=img.currentSrc||img.getAttribute("src")||img.getAttribute("data-src");
           if(!url||known.has(url))continue;
@@ -477,6 +478,20 @@
       return el.matches('[data-testid="chatOutput"]')||
         MESSAGE_TYPES.some(t=>t.role==="service"&&t.pattern.test(txt));
     });
+    // Snapshot the actual ordered sequence. Never synthesize a duplicate
+    // notice from one occurrence; snapshots preserve identical sibling texts.
+    const snapshot=candidates.map(el=>{
+      const text=(el.innerText||el.textContent||"").trim();
+      const role=el.matches('[data-testid="chatOutput"]')?"user":"system_event";
+      const kind=classifyMessage(el,text,role);
+      return {text,role:kind.role,message_type:kind.type,html:cleanHTML(el)};
+    });
+    if(snapshot.length>0&&snapshot.length<=40&&
+       snapshot.some(x=>x.role==="service"||x.message_type?.startsWith("service"))){
+      const signature=snapshot.map(x=>x.role+":"+x.text).join("|");
+      if(!outsideSnapshots.some(x=>x.signature===signature))
+        outsideSnapshots.push({signature,items:snapshot,seen_scan:scans});
+    }
     // Preserve duplicates through DOM order and unique element identity.
     // Text alone is NOT a unique identifier for repeated service errors.
     for(let i=0;i<candidates.length;i++){
@@ -495,49 +510,32 @@
       });
     }
   }
-  function canonicalOutside(){
-    // Re-rendering may replace the same element dozens of times. Collapse
-    // repeated consecutive sightings, but preserve genuine duplicate notices.
-    const source=[...systemMessages.values()].filter(r=>Number.isInteger(r.outside_sequence));
-    const variants=new Map();
-    for(const r of source){
-      const norm=(r.text||"").trim().replace(/\s+/g," ");
-      const category=r.role==="user"?"user":r.message_type||r.role;
-      const key=category+"|"+norm;
-      if(!variants.has(key)||r.first_seen_scan<variants.get(key).first_seen_scan)variants.set(key,r);
-    }
-    return [...variants.values()];
-  }
   function assignOutsidePositions(){
-    const occupied=new Set([...records.values()].map(r=>r.position).filter(valid));
-    const missing=Array.from({length:Math.min(expected,10000)},(_,i)=>i+1).filter(p=>!occupied.has(p));
-    const contiguous=missing.length>0&&missing.every((p,i)=>!i||p===missing[i-1]+1);
-    if(!contiguous)return false;
-    // Real repeated quota notices have identical text but two distinct turns.
-    // Reconstruct only if one unique USER/ACTION/USER/ACTION sequence exists
-    // amongst observed exceptional content. No fabricated message body.
-    const pool=canonicalOutside();
-    const quota=pool.filter(r=>r.message_type==="service_daily_limit");
-    const users=pool.filter(r=>r.role==="user");
-    if(missing.length===4&&quota.length>=1&&users.length>=2){
-      const related=users.filter(r=>/haz zoom y identifica|que paso/i.test(r.text||""));
-      const hasZoom=related.find(r=>/haz zoom y identifica/i.test(r.text||""));
-      const hasQue=related.find(r=>/^que paso$/i.test((r.text||"").trim()));
-      if(hasZoom&&hasQue){
-        const template=quota[0];
-        const items=[hasZoom,template,hasQue,{...template}];
-        items.forEach((r,i)=>{
-          r.position=missing[i];r.position_source="inferred_from_observed_service_sequence";
-        });
-        // Remove all volatile duplicate observations and replace with
-        // canonical four records. Keep original DOM text & provenance.
-        for(const [k,r] of systemMessages){if(Number.isInteger(r.outside_sequence))systemMessages.delete(k);}
-        items.forEach((r,i)=>systemMessages.set("canonical_outside:"+i,r));
-        outsideConsolidated=true;
-        return true;
-      }
+    if(outsideConsolidated)return true;
+    const used=new Set([...records.values()].map(x=>x.position).filter(valid));
+    const missing=Array.from({length:Math.min(expected,10000)},(_,i)=>i+1)
+      .filter(p=>!used.has(p));
+    if(!missing.length||!missing.every((p,i)=>i===0||p===missing[i-1]+1))return false;
+    // Prefer a real DOM snapshot containing exactly the missing count,
+    // including repeated identical notices as distinct DOM siblings.
+    const possibilities=outsideSnapshots.filter(x=>x.items.length===missing.length);
+    const snap=possibilities.sort((a,b)=>b.items.filter(x=>x.role==="service").length-
+      a.items.filter(x=>x.role==="service").length||a.seen_scan-b.seen_scan)[0];
+    if(!snap)return false;
+    // Do not reassign numbered messages just because another region happens
+    // to share the same count; require user or system/service content.
+    if(!snap.items.some(x=>x.role==="service"))return false;
+    for(const [k,r] of systemMessages){
+      if(Number.isInteger(r.outside_sequence))systemMessages.delete(k);
     }
-    return false;
+    snap.items.forEach((r,i)=>systemMessages.set("canonical_outside:"+i,{
+      ...r,position:missing[i],position_source:"inferred_from_observed_dom_sequence",
+      classification_source:"observed_unindexed_element",
+      attachments:[],message_id:null,storage_message_id:null,
+      message_timestamp:null,first_seen_scan:snap.seen_scan,last_seen_scan:scans
+    }));
+    outsideConsolidated=true;
+    return true;
   }
   function scan(tag){
     scans++;
@@ -623,7 +621,9 @@
     const positions=new Set([...records.values(),...systemMessages.values()].map(r=>r.position).filter(valid));
     const missing=Array.from({length:Math.min(expected,10000)},(_,i)=>i+1).filter(p=>!positions.has(p));
     return {expected,positioned:positions.size,records:records.size,missing,
-      unpositioned_events:[...systemMessages.values()].filter(x=>!x.position).length};
+      unpositioned_events:outsideConsolidated?0:
+        Math.max(0,...outsideSnapshots.map(x=>x.items.length)),
+      unpositioned_observation_count:[...systemMessages.values()].filter(x=>!x.position).length};
   }
   function reconcileContextPositions(){
     const occupied=new Set([...records.values(),...systemMessages.values()].map(e=>e.position).filter(valid));
