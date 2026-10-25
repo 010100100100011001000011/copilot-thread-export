@@ -717,7 +717,7 @@
       }
     }
     for(const entry of sourceDocuments.values()){
-      const name=uniquePath("sources",entry.filename);
+      const name=uniquePath("project_context",entry.filename);
       entries.push({name,bytes:entry.bytes});
       catalog.push({position:null,source_positions:entry.positions,
         name,bytes:entry.bytes.length,kind:"project_context_document",source:"copilot_project_references",
@@ -1536,8 +1536,9 @@
       archive_file_policy:{
         html:"Complete captured conversation with optimized viewable images and document references",
         jsonl:"Message data, metadata and integrity warnings; binary files excluded",
-        optional_zip:"Uncompressed/recovered image bytes, verified downloadable documents, extracted code blocks and manifest.json",
-        local_files_accepted:false
+        optional_zip:"Unresized recovered image bytes, chat documents, extracted code blocks and manifest.json; Project-context files only by explicit opt-in",
+        local_files_accepted:false,
+        project_context_requires_user_consent:true
       },
       project_context_references:sourceInventory,
       project_context_inclusion_requested:includeProjectContext,
@@ -1646,7 +1647,9 @@
     const hasReferences=sorted.some(r=>(r.attachments||[]).length);
     if(originalMedia.size||recoveredDocuments.size||sourceDocuments.size||codeFiles.length||
        sorted.some(r=>(r.attachments||[]).length)){
-      const save=confirm(UI.zipConfirm);
+      const save=confirm(includeProjectContext?
+        "Save optional ZIP with all recoverable chat files PLUS accessible Project-context files in a separate project_context/ folder?":
+        UI.zipConfirm);
       if(save){
         const archived=zipFromRecoveredMedia(sorted);
         downloadBlob(archived.blob,"copilot-v5.16_"+stamp+"_attachments.zip");
