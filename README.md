@@ -1,154 +1,62 @@
-Overview
+# Copilot Thread Export — v6.0.0
 
-This repository contains two JavaScript console-based exporters that extract the full conversation history (thread) from Microsoft Copilot:
+Unofficial **browser-console exporter for Copilot Free (web)**. The Microsoft 365 Copilot exporter is a separate legacy script, not part of the v6 engine.
 
-    Microsoft 365 Copilot (business/enterprise version)
+**Current stable version:** [copilot-thread-exporter-free.v6.0.0.js](copilot-thread-exporter-free.v6.0.0.js).
 
-    Copilot Free (public web version)
+## Export a conversation
 
-Both scripts run directly in the browser using F12 → Console, scroll the entire chat automatically, sanitize UI noise, and export:
+1. Open the intended Copilot Free chat on a desktop browser, then open **F12 → Console**.
+2. Copy the entire contents of [copilot-thread-exporter-free.v6.0.0.js](copilot-thread-exporter-free.v6.0.0.js) into the console and execute it. Review code before accepting any browser “allow pasting” warning.
+3. Leave the Copilot tab active during traversal. If asked, type the **full, current conversation title**, not just a short Project name. Confirm dates. HTML and JSONL download automatically; an optional ZIP is offered for recovered media/files.
 
-    A clean HTML file (full thread, ordered, sanitized)
+Exporter controls/prompts are in **English**; original conversation languages remain unchanged. No local-file picker, external backend, Docker, browser extension, or upload of chat content is required.
 
-    A structured JSONL file (ideal for datasets, LLM training, backups)
+## Archive outputs
 
-Version: v3.6.9 — FastScan Ordered + Deep Sanitize + JSONL
-Files
+| Output | Saved information |
+| --- | --- |
+| HTML | Observed chronological chat (rich replies, diagrams, tables and text), images optimized to at most 1600 px for display, and a prominent integrity/attachment notice. |
+| JSONL | Indexed chronology, message data, title/date metadata, reference inventory, provenance, unresolved file records, and diagnostics. Large binaries are excluded. |
+| Optional ZIP | Recoverable browser image bytes **before** HTML downscaling, actual accessible and signature-validated file binaries, preserved preformatted text/ASCII diagrams (`.txt`), genuine code blocks when detected, and `manifest.json`. |
 
-    copilot-thread-exporter-365.v3.6.9.js  
-    Exporter for Microsoft 365 Copilot.
+**Images in ZIP** are the highest-resolution **browser-accessible payloads**; they may still be thumbnails/previews or re-encoded versions, not the originals uploaded to Microsoft.
 
-    copilot-thread-exporter-free.v3.6.9.js  
-    Exporter for Copilot Free.
+**Plain Text blocks are not automatically code.** The ZIP stores such material under `position_N/preformatted/` and marks it as `preformatted_text`; recognized programming languages are stored under `position_N/code/` and marked as `code`. The manifest distinguishes both counts and reports `includes_documents`, `includes_code_blocks` and `includes_preformatted_text` from files **actually written**, never merely planned.
 
-Features
+## Attachments and Project context
 
-    Full automatic scroll & capture
+File pills, Project context documents, and directly uploaded chat attachments are **not interchangeable**. Recurring labels such as “3 files” do not prove three new unique documents in each message. A file title shown under **Sources / References** may not establish which level of context originally supplied it.
 
-    Deduplication via SHA‑256
+The HTML and JSONL record visible document references. Binary files are added to ZIP **only if their bytes are successfully retrieved and validated**. Project-context resources are never silently included; an optional attempt is offered only when an actual candidate file URL is exposed, with an opt-in confirmation.
 
-    Deep sanitization (removes UI buttons, badges, noise)
+### OneDrive / Word Online limitation
 
-    Ordered output by vertical position
+A separate browser experiment confirmed that **same-origin JavaScript inside Word Online** could fetch an authenticated, complete **166,639-byte ODT** (`HTTP 200`). This does **not** mean JavaScript executing on Copilot Free can read OneDrive or Office cross-origin binary responses. An automatic transfer of Word Online document bytes to the Copilot ZIP is **not part of v6.0.0**. Opening a document in Word Online or saving a Word link is not a binary backup.
 
-    Strict date prompts (thread created / last modified)
+If your export lists unresolved Office files, download/retain them separately **before deleting the original conversation or Project**. Do not assume that an HTML/JSONL/ZIP archive is a complete Microsoft account export.
 
-    HTML export with metadata
+## Validation and scope
 
-    JSONL export with structured rows
+The release was tested with two real Copilot Free conversations on earlier and RC versions: a **98-position** complex conversation with **7 images**, and a **20-position** conversation with linked Project references. A full RC browser export confirmed **98/98 positions**, 7 embedded images, 11 externally referenced titles, and the preservation of 198 preformatted text/diagram blocks. The exporter initially called these blocks “code”; the final release corrects their classification without changing message traversal.
 
-    Compatible with long threads (thousands of messages)
+**Test caveat:** the uploaded browser evidence included HTML, JSONL and the ZIP's `manifest.json`, but **not the entire ZIP binary**. The ZIP writer was separately smoke-tested with binary fixtures and correct archive entries. An independent full binary ZIP inspection of that exact browser run was not performed. See [VALIDATION.md](VALIDATION.md).
 
-How to Use
-1. Open your Copilot chat
+### Key constraints
 
-Navigate to the conversation you want to export.
-2. Open Developer Tools
+- UI/DOM virtualization may cause truncated reply bodies even when all message indices are present.
+- Some metadata dates cannot be inferred from browser messages and must be user-confirmed.
+- If title detection cannot verify the full chat name, the exporter asks rather than trusting a Project label.
+- Browser policies may block multiple downloads.
+- Project external resources can be viewable but not binary-accessible from Copilot.
 
-Press:
+## Legacy exporters
 
-    Windows: F12
+- [Copilot Free v3.6.9](copilot-thread-exporter-free.v3.6.9.js) (kept for rollback)
+- [Microsoft 365 Copilot v3.6](copilot-thread-exporter-365.v3.6.js) (separate product/interface)
 
-    Mac: ⌥ + ⌘ + I
+## Security, support and license
 
-Go to the Console tab.
-3. Paste the script
+Never post a chat export, HAR, signed document link, cookie, token or confidential attachment in a public GitHub issue. For breakages, [open an issue](https://github.com/010100100100011001000011/copilot-thread-export/issues) with sanitized browser/version details and symptoms.
 
-Open the .js file, copy its entire content, and paste it into the console.
-4. Press Enter
-
-The script will:
-
-    Detect scrollable containers
-
-    Auto‑scroll the entire thread
-
-    Capture all messages
-
-    Ask you to confirm two dates:
-
-        Thread created
-
-        Last modified
-
-5. Download files
-
-When finished, two files will automatically download:
-
-    thread-export_v3.6_fastscan-ordered_YYYY-MM-DD_HH-MM-SS.html
-
-    thread-export_v3.6_fastscan-ordered_YYYY-MM-DD_HH-MM-SS.jsonl
-
-JSONL Format
-
-Each line is a JSON object:
-json
-
-{
-  "thread_id": "thread_2026-05-22T21-14-55Z",
-  "order": 1,
-  "role": "user",
-  "text": "User message text…",
-  "hash": "a1b2c3…",
-  "yAbs": 12345,
-  "exported_at": "2026-05-22T21:14:55.000Z",
-  "thread_title": "Auto-detected title",
-  "thread_created_date": "2026-05-20",
-  "thread_last_modified_date": "2026-05-22",
-  "page_title": "Copilot",
-  "page_url": "https://copilot.microsoft.com/...",
-  "capture_start": "2026-05-22T21:14:55.000Z",
-  "capture_end": "2026-05-22T21:15:12.000Z"
-}
-
-Differences Between the Two Scripts
-Feature	365 Version	Free Version
-DOM selectors	Enterprise Copilot DOM	Public Copilot DOM
-Code block detection	data-testid="markdown-reply"	div[data-content="ai-message"]
-User message detection	fai-UserMessage__message	div[data-content="user-message"]
-Behavior	Identical engine	Identical engine
-## Compatibility, Maintenance and Reporting Issues
-
-**Microsoft Copilot is a changing web application.** Microsoft can change its HTML/DOM structure, message virtualization, image/attachment viewers, loading behavior, and service notices without advance notice. As a result, an exporter that works today may need updates to keep working reliably. This is a community-maintained, unofficial project, **not affiliated with or supported by Microsoft**. Compatibility with every Copilot account, interface, language or conversation cannot be guaranteed.
-
-**Before deleting any original conversation:** open the generated HTML, compare representative messages with the source, verify images, code blocks and attachments, and check the export's integrity warnings. A complete message count alone does **not** prove that every message body or attachment was captured. HTML image previews may differ from the originally uploaded files. Keep important originals separately.
-
-**If Copilot changes or an export stops working:** [open a GitHub Issue](https://github.com/010100100100011001000011/copilot-thread-export/issues) so the maintainer can investigate and, when feasible, publish a compatibility update. Please include:
-
-- Copilot version (Free web or Microsoft 365), browser and OS.
-- Date of the failure, exporter file/version and exact symptom (missing messages, broken images, code blocks, errors, or excessive runtime).
-- Sanitized console diagnostics, **without** conversation text, private URLs, authentication tokens, account details, personal documents or images.
-
-Never publish sensitive conversation exports or personal attachments to this public repository. Experimental scripts live on separate branches and are not automatically part of the stable `main` version.
-
-Troubleshooting
-Export stops early
-
-Some pages load messages lazily. Scroll manually to the bottom once, then rerun the script.
-HTML downloads but JSONL does not
-
-Your browser may block multiple downloads.
-Enable: Settings → Privacy → Allow multiple automatic downloads.
-Dates keep asking again
-
-Strict mode requires YYYY‑MM‑DD only.
-License
-
-This project is released under the MIT License.
-See the LICENSE file for details.
-Contributing
-
-Pull requests are welcome.
-If you want to add support for:
-
-    Mobile Copilot
-
-    Copilot for Windows
-
-    Multi‑thread batch export
-
-Open an issue or PR.
-Author
-
-Created by Tec — Milano, Italia.
-If you use these tools, consider starring the repository ⭐
+Unofficial community software; not affiliated with or supported by Microsoft. MIT license.
