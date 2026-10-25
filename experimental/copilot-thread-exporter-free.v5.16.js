@@ -1270,6 +1270,20 @@
         }
         if(dialog){
           sourcePanelsVisible++;
+          // "Origini" may open on another tab. Project documents shown
+          // under "Riferimenti / References" must be selected explicitly.
+          const referencesTab=[...dialog.querySelectorAll(
+            '[role="tab"],button,[role="button"]')].find(el=>{
+              const label=(el.getAttribute("aria-label")||
+                el.getAttribute("title")||el.innerText||"").trim();
+              return /^(?:Riferimenti|References|Referencias|Références|Referenzen)$/i.test(label)
+                &&displayed(el);
+            });
+          if(referencesTab&&referencesTab.getAttribute("aria-selected")!=="true"){
+            referencesTab.click();
+            await wait(360);
+            dialog=sourceDialog()||dialog;
+          }
           const added=collectVisibleSources(dialog,pos);
           console.log("[v5.16] Sources panel",{
             position:pos,reference_entries:added});
