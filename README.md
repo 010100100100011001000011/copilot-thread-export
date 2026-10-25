@@ -1,58 +1,62 @@
-# Copilot Thread Export — v6.0.0 Release Candidate
+# Copilot Thread Export — v6.0.0
 
-Unofficial, browser-console archiver for **Microsoft Copilot Free (web)**. No extension, Docker, external backend, or undocumented Microsoft API is required for its basic workflow. Microsoft 365 Copilot enterprise has a **separate legacy exporter** and is **not** covered by this release candidate.
+Unofficial **browser-console exporter for Copilot Free (web)**. The Microsoft 365 Copilot exporter is a separate legacy script, not part of the v6 engine.
 
-> **Release status:** v6.0.0-rc1. The code has passed syntax and isolated ZIP-building checks; **real-browser regression testing of rc1 is still required** before replacing the stable `main` release.
+**Current stable version:** [copilot-thread-exporter-free.v6.0.0.js](copilot-thread-exporter-free.v6.0.0.js).
 
-## Run the Free-web exporter
+## Export a conversation
 
-1. Open the intended conversation on Copilot Free in a desktop browser.
-2. Open F12 → **Console**. Copy and paste the entire contents of [copilot-thread-exporter-free.v6.0.0-rc1.js](copilot-thread-exporter-free.v6.0.0-rc1.js) and run it. If your browser warns about console pasting, read the code and explicitly allow pasting only if you trust it.
-3. Leave the tab open while the exporter traverses the conversation. Confirm the **full conversation title** if Copilot does not expose a verifiable one, then answer the date prompts. The browser will download HTML and JSONL, and can offer an optional ZIP.
+1. Open the intended Copilot Free chat on a desktop browser, then open **F12 → Console**.
+2. Copy the entire contents of [copilot-thread-exporter-free.v6.0.0.js](copilot-thread-exporter-free.v6.0.0.js) into the console and execute it. Review code before accepting any browser “allow pasting” warning.
+3. Leave the Copilot tab active during traversal. If asked, type the **full, current conversation title**, not just a short Project name. Confirm dates. HTML and JSONL download automatically; an optional ZIP is offered for recovered media/files.
 
-The exporter's **interface and prompts are in English**. Chat content is preserved in its original language.
+Exporter controls/prompts are in **English**; original conversation languages remain unchanged. No local-file picker, external backend, Docker, browser extension, or upload of chat content is required.
 
-## Archive contents
+## Archive outputs
 
-| Output | What it preserves | Important limitations |
-| --- | --- | --- |
-| HTML | Chronological observed messages, code/tables/diagrams, browser-rendered images and an integrity warning. Images larger than 1600 px are optimized for viewing. | Indexed coverage does not guarantee every virtualized body was fully mounted. |
-| JSONL | Ordered messages, structure, provenance, title/date metadata, missing-attachment records, integrity diagnostics. | Does not embed large binary files. |
-| Optional ZIP | Highest-resolution image **bytes available to the browser before HTML optimization**; code blocks as files; attached document bytes **only when truly downloaded and signature-validated**; `manifest.json`. | Images may be previews or re-encoded; do not assume they match an original upload. Original Office documents may be inaccessible. |
+| Output | Saved information |
+| --- | --- |
+| HTML | Observed chronological chat (rich replies, diagrams, tables and text), images optimized to at most 1600 px for display, and a prominent integrity/attachment notice. |
+| JSONL | Indexed chronology, message data, title/date metadata, reference inventory, provenance, unresolved file records, and diagnostics. Large binaries are excluded. |
+| Optional ZIP | Recoverable browser image bytes **before** HTML downscaling, actual accessible and signature-validated file binaries, preserved preformatted text/ASCII diagrams (`.txt`), genuine code blocks when detected, and `manifest.json`. |
 
-An empty-asset ZIP can still contain `manifest.json`. The manifest now sets `includes_documents` and `includes_code_blocks` **only when corresponding files were actually captured**.
+**Images in ZIP** are the highest-resolution **browser-accessible payloads**; they may still be thumbnails/previews or re-encoded versions, not the originals uploaded to Microsoft.
 
-### Important: chat attachments vs Project references
+**Plain Text blocks are not automatically code.** The ZIP stores such material under `position_N/preformatted/` and marks it as `preformatted_text`; recognized programming languages are stored under `position_N/code/` and marked as `code`. The manifest distinguishes both counts and reports `includes_documents`, `includes_code_blocks` and `includes_preformatted_text` from files **actually written**, never merely planned.
 
-A Project can add document references to every conversation turn. A label such as “3 files” repeated in ten turns is **not** evidence of thirty distinct chat uploads.
+## Attachments and Project context
 
-The exporter reports Project context names in the HTML/JSONL. It **does not silently insert all Project documents into the ZIP**. It only offers an opt-in attempt when it has an actual browser-exposed candidate resource, and it does not treat a Word Online viewer link as a document download.
+File pills, Project context documents, and directly uploaded chat attachments are **not interchangeable**. Recurring labels such as “3 files” do not prove three new unique documents in each message. A file title shown under **Sources / References** may not establish which level of context originally supplied it.
 
-**OneDrive / Word Online:** In an isolated live experiment, the browser successfully fetched a 166,639-byte ODT from `word-edit.officeapps.live.com` using same-origin JavaScript (`200`, valid ZIP/ODT signature). **This does not establish an authorized binary transfer into JavaScript on `copilot.com`**. The Word Online-to-Copilot ZIP bridge is **not implemented** in v6.0.0-rc1. Save the original Word/Excel documents independently if you plan to delete the conversation or its Project.
+The HTML and JSONL record visible document references. Binary files are added to ZIP **only if their bytes are successfully retrieved and validated**. Project-context resources are never silently included; an optional attempt is offered only when an actual candidate file URL is exposed, with an opt-in confirmation.
 
-Avoid uploading sensitive HAR files: they can contain authorization tokens, cookies and protected URLs.
+### OneDrive / Word Online limitation
 
-## Validation before the stable release
+A separate browser experiment confirmed that **same-origin JavaScript inside Word Online** could fetch an authenticated, complete **166,639-byte ODT** (`HTTP 200`). This does **not** mean JavaScript executing on Copilot Free can read OneDrive or Office cross-origin binary responses. An automatic transfer of Word Online document bytes to the Copilot ZIP is **not part of v6.0.0**. Opening a document in Word Online or saving a Word link is not a binary backup.
 
-See [VALIDATION.md](VALIDATION.md) for the two known test conversations and acceptance criteria. Keep the source conversations until you have reviewed their exported HTML and all required external attachments.
+If your export lists unresolved Office files, download/retain them separately **before deleting the original conversation or Project**. Do not assume that an HTML/JSONL/ZIP archive is a complete Microsoft account export.
 
-### Known limits
+## Validation and scope
 
-- Microsoft can change its DOM, virtual scrolling, reference panels and content security rules.
-- Full title detection avoids uncertain Project names and instead asks the user when live UI evidence is insufficient.
-- The archive is faithful to **accessible, observed browser content**; it is not a guarantee of a complete Microsoft account backup.
-- Project context files may be viewable in the browser yet not retrievable as bytes from Copilot.
-- Multiple downloads may need browser permission.
+The release was tested with two real Copilot Free conversations on earlier and RC versions: a **98-position** complex conversation with **7 images**, and a **20-position** conversation with linked Project references. A full RC browser export confirmed **98/98 positions**, 7 embedded images, 11 externally referenced titles, and the preservation of 198 preformatted text/diagram blocks. The exporter initially called these blocks “code”; the final release corrects their classification without changing message traversal.
 
-## Legacy versions
+**Test caveat:** the uploaded browser evidence included HTML, JSONL and the ZIP's `manifest.json`, but **not the entire ZIP binary**. The ZIP writer was separately smoke-tested with binary fixtures and correct archive entries. An independent full binary ZIP inspection of that exact browser run was not performed. See [VALIDATION.md](VALIDATION.md).
 
-- [Copilot Free v3.6.9 (current stable main)](copilot-thread-exporter-free.v3.6.9.js)
-- [Microsoft 365 Copilot v3.6](copilot-thread-exporter-365.v3.6.js)
+### Key constraints
 
-Earlier experimental versions are kept on their separate branches.
+- UI/DOM virtualization may cause truncated reply bodies even when all message indices are present.
+- Some metadata dates cannot be inferred from browser messages and must be user-confirmed.
+- If title detection cannot verify the full chat name, the exporter asks rather than trusting a Project label.
+- Browser policies may block multiple downloads.
+- Project external resources can be viewable but not binary-accessible from Copilot.
 
-## Security and maintenance
+## Legacy exporters
 
-Never share raw chat exports, HAR logs, signed/download URLs, tokens, or corporate document content in public issues. For compatibility failures, [open a sanitized issue](https://github.com/010100100100011001000011/copilot-thread-export/issues) with the version, browser, symptoms and non-sensitive logs.
+- [Copilot Free v3.6.9](copilot-thread-exporter-free.v3.6.9.js) (kept for rollback)
+- [Microsoft 365 Copilot v3.6](copilot-thread-exporter-365.v3.6.js) (separate product/interface)
 
-MIT licensed. Not affiliated with or endorsed by Microsoft.
+## Security, support and license
+
+Never post a chat export, HAR, signed document link, cookie, token or confidential attachment in a public GitHub issue. For breakages, [open an issue](https://github.com/010100100100011001000011/copilot-thread-export/issues) with sanitized browser/version details and symptoms.
+
+Unofficial community software; not affiliated with or supported by Microsoft. MIT license.
