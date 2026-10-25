@@ -1444,6 +1444,16 @@
       external_links_found:externalLinks.size,
       external_links_not_downloaded:[...externalLinks.values()],
       images_embedded:embedded,
+      archive_image_policy:{
+        html_max_side_px:1600,html_jpeg_quality:0.85,
+        zip: "Unresized image bytes as exposed to the browser; original uploaded file not independently verified"
+      },
+      archive_file_policy:{
+        html:"Complete captured conversation with optimized viewable images and document references",
+        jsonl:"Message data, metadata and integrity warnings; binary files excluded",
+        optional_zip:"Uncompressed/recovered image bytes, verified downloadable documents, extracted code blocks and manifest.json",
+        local_files_accepted:false
+      },
       sources_panel_references:sourceInventory,
       sources_documents_recovered:sourceDocuments.size,
       exportable_code_blocks:codeFiles.length,
@@ -1503,7 +1513,16 @@
       '<p><b>External links not downloaded:</b> '+externalLinks.size+
       '. These may be ordinary websites, documents, image sources or permission-restricted services.</p>'+
       '<p><b>Total recovery time:</b> '+htmlEscape(elapsed)+'</p>'+
-      '<p>Embedded attachment images: '+embedded+'. Documents with validated bytes available for ZIP: '+recoveredDocuments.size+
+      '<h3>What is saved in each archive file</h3>'+
+      '<p><b>HTML:</b> complete captured conversation, diagrams, code and viewable images. Images larger than 1600 pixels are optimized for viewing (JPEG quality target: 85% when applicable).</p>'+
+      '<p><b>JSONL:</b> messages, chronology, classifications and integrity metadata without embedded binary payloads.</p>'+
+      '<p><b>Optional ZIP:</b> browser-recovered images at their highest available resolution WITHOUT HTML resizing; downloaded Word/Excel/PDF and other verified files; exported code blocks in their respective formats; and manifest.json. No files from outside the conversation are requested. Some files may remain inaccessible.</p>'+
+      '<p><b>ZIP-eligible items:</b> '+originalMedia.size+' distinct browser image payloads, '+
+      (recoveredDocuments.size+sourceDocuments.size)+' downloadable document records, '+
+      codeFiles.length+' code blocks. Unresolved attachment references: '+unresolved.length+
+      '. Additional Sources-panel references not recovered: '+sourceInventory.filter(x=>!x.bytes_recovered).length+'.</p>'+
+      '<p>Embedded attachment images: '+embedded+'. Documents with validated bytes available for ZIP: '+
+      (recoveredDocuments.size+sourceDocuments.size)+
       '. Linked attachment references NOT embedded in HTML: '+unresolved.length+'. '+
       'If you delete the original conversation or lose access to linked services, referenced documents and files may become unavailable. '+
       'Download and save important attachments separately before deleting the original conversation.</p>'+
