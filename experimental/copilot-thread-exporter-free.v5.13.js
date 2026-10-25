@@ -122,7 +122,7 @@
     }
     return /^data:image\//i.test(url||"")?url:null;
   }
-  const FILE_EXTENSION=/\.(?:docx?|xlsx?|pptx?|pdf|txt|csv|json|xml|html?|zip|7z|rar|rtf|odt|ods|odp|epub|md|py|js|ts|java|c|cpp|jpg|jpeg|png|webp|gif|avif|bmp|svg)$/i;
+  const FILE_EXTENSION=/\.(?:docx?|docm|dotx?|xlsx?|xlsm|xlsb|xltx?|pptx?|pptm|potx?|pdf|txt|csv|json|xml|html?|zip|7z|rar|rtf|odt|ods|odp|pages|numbers|key|epub|md|py|js|ts|java|c|cpp|jpg|jpeg|png|webp|gif|avif|bmp|svg)$/i;
   function validAttachmentFilename(value){
     const t=String(value||"").trim();
     return t.length>0&&t.length<255&&!/^(?:https?:|file:|ftp:|www\.)/i.test(t)&&
@@ -451,9 +451,9 @@
       new TextDecoder().decode(bytes.slice(0,256)));
     if(isHtml)return {ok:false,reason:"HTML login/error page, not attachment"};
     if(ext==="pdf")return {ok:pdf,kind:"pdf",reason:"PDF signature mismatch"};
-    if(["docx","xlsx","pptx","odt","ods","odp","zip","epub"].includes(ext))
+    if(["docx","docm","dotx","xlsx","xlsm","xlsb","xltx","pptx","pptm","potx","odt","ods","odp","pages","numbers","key","zip","epub"].includes(ext))
       return {ok:zip,kind:ext,reason:"ZIP/Office signature mismatch"};
-    if(["doc","xls","ppt"].includes(ext))
+    if(["doc","dot","xls","xlt","ppt","pot"].includes(ext))
       return {ok:ole,kind:ext,reason:"legacy Office signature mismatch"};
     if(["png","jpg","jpeg","gif","webp"].includes(ext)){
       const valid=ext==="png"?png:["jpg","jpeg"].includes(ext)?jpg:ext==="gif"?gif:webp;
@@ -461,7 +461,9 @@
     }
     if(ext==="7z")return {ok:eq(0x37,0x7a,0xbc,0xaf,0x27,0x1c),kind:ext,reason:"7z signature mismatch"};
     if(ext==="rar")return {ok:eq(0x52,0x61,0x72,0x21),kind:ext,reason:"RAR signature mismatch"};
-    if(["csv","txt","json","xml","md","html","htm","rtf","py","js","ts","java","c","cpp"].includes(ext)){
+    if(ext==="rtf")return {ok:new TextDecoder().decode(bytes.slice(0,8)).startsWith("{\\rtf"),kind:ext,
+      reason:"RTF signature mismatch"};
+    if(["csv","txt","json","xml","md","html","htm","py","js","ts","java","c","cpp"].includes(ext)){
       if(["html","htm"].includes(ext))return {ok:false,reason:"HTML not accepted as document response"};
       const containsNul=bytes.slice(0,4096).some(x=>x===0);
       return {ok:!containsNul,kind:ext,reason:"text extension has binary data"};
