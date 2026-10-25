@@ -78,7 +78,8 @@
     // Keep speaker identity, even if the user quotes a service error.
     const service=match?.role==="service"&&role!=="user";
     return {type:match?.id||(role==="user"?"user_message":role==="assistant"?"assistant_message":"unknown_context"),
-      role:service?"service":role,source:match?"dictionary":"generic"};
+      role:role==="user"?"user":match?.role==="context"&&role!=="assistant"?"context":service?"service":role,
+      source:match?"dictionary":"generic"};
   }
   function normalizeEmbeddedImage(url){
     if(/^data:application\/octet-stream;base64,/i.test(url||"")){
@@ -1023,7 +1024,10 @@
     const html='<!doctype html><html><head><meta charset="utf-8"><title>'+htmlEscape(userTitle||"Copilot v5.10 export")+'</title><style>'+style+'</style></head><body><h1>'+htmlEscape(userTitle||"Copilot Thread v5.10")+'</h1>'+notice+
       sorted.map((r,i)=>'<article data-position="'+htmlEscape(r.position)+'"><h3>'+htmlEscape(r.role==="user"?"Usuario":r.role==="assistant"?"Copilot":r.role==="service"?"Copilot · aviso de servicio":"Evento de contexto")+' <small style="font-weight:normal;color:#777">#'+htmlEscape(r.position||i+1)+'</small></h3><small>'+htmlEscape(r.message_timestamp||"Timestamp unavailable")+'</small>'+
         readableHTML(r)+
-        ((r.attachments||[]).length?'<section><h4>Attachments</h4>'+(r.attachments||[]).map(a=>'<figure><figcaption>'+htmlEscape(a.filename||"Unnamed attachment")+'</figcaption>'+(a.image_data_uri?'<img alt="Attached image" src="'+htmlEscape(a.image_data_uri)+'">':'<p>Attachment metadata only; file content unavailable</p>')+'</figure>').join('')+'</section>':'')+
+        ((r.attachments||[]).length?'<section><h4>Attachments</h4>'+(r.attachments||[]).map(a=>a.kind==="file_group"?
+        '<p><b>'+htmlEscape(a.count||"?")+' file references</b> shown by Copilot; names and binaries unavailable. Repeated across turns may refer to the same project files.</p>':
+        '<figure><figcaption>'+htmlEscape(a.filename||"Unnamed attachment")+'</figcaption>'+
+        (a.image_data_uri?'<img alt="Attached image" src="'+htmlEscape(a.image_data_uri)+'">':'<p>Attachment metadata only; file content unavailable</p>')+'</figure>').join('')+'</section>':'')+
         '</article>').join("\n")+'<footer style="margin:38px 0 15px;border-top:1px solid #bbb;padding-top:12px;color:#555;font-size:12px;text-align:center">A service by &copy; <a href="https://github.com/010100100100011001000011" rel="noopener noreferrer" target="_blank"><strong>Teclive</strong></a> that makes your life easier.</footer></body></html>';
     const stamp=new Date().toISOString().replace(/[:.]/g,"-");
     console.log("[v5.10] EXPORT RESULT",meta);
