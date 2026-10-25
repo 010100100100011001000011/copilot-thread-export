@@ -546,6 +546,47 @@
       }
     }
   }
+
+  async function chooseLocalBackupFiles(){
+    // Explicit user opt-in only; file bytes never leave this browser.
+    return await new Promise(resolve=>{
+      const shade=document.createElement("div");
+      shade.style.cssText="position:fixed;z-index:2147483647;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;padding:20px";
+      const panel=document.createElement("div");
+      panel.style.cssText="background:white;color:#222;border-radius:10px;max-width:540px;width:100%;padding:22px;font:15px/1.5 system-ui,sans-serif;box-shadow:0 12px 38px #0005";
+      const title=document.createElement("h2");
+      title.textContent="Archivos no recuperables automáticamente";title.style.margin="0 0 10px";
+      const info=document.createElement("p");
+      info.textContent="Si conservas los Word, Excel, PDF u otros originales en tu equipo, puedes añadirlos ahora al ZIP. Se guardarán en user_selected/ y el manifiesto distinguirá estos archivos de los recuperados desde Copilot. No se envía nada a Internet.";
+      const status=document.createElement("p");status.style.fontSize="13px";
+      const input=document.createElement("input");
+      input.type="file";input.multiple=true;input.style.display="none";
+      const pick=document.createElement("button"),skip=document.createElement("button");
+      pick.textContent="Seleccionar archivos locales";
+      skip.textContent="Omitir y continuar";
+      for(const b of [pick,skip])b.style.cssText="padding:9px 13px;border:1px solid #888;border-radius:6px;margin:5px 8px 0 0;cursor:pointer";
+      pick.style.background="#dbeafe";
+      const finish=result=>{shade.remove();resolve(result)};
+      pick.onclick=()=>input.click();
+      skip.onclick=()=>finish([]);
+      input.onchange=async()=>{
+        pick.disabled=true;skip.disabled=true;
+        const picked=[];let size=0;
+        for(const file of Array.from(input.files||[])){
+          if(file.size<=0||file.size>MAX_DOC_BYTES||size+file.size>MAX_ARCHIVE_BYTES)continue;
+          status.textContent="Validando "+file.name;
+          try{
+            const bytes=new Uint8Array(await file.arrayBuffer());
+            if(!binaryFormat(bytes,file.name,file.type).ok)continue;
+            picked.push({filename:file.name,bytes});size+=bytes.length;
+          }catch{}
+        }
+        finish(picked);
+      };
+      panel.append(title,info,status,pick,skip,input);shade.appendChild(panel);
+      document.body.appendChild(shade);
+    });
+  }
   function zipFromRecoveredMedia(sorted,manualFiles=[]){
     const encoder=new TextEncoder(),entries=[],catalog=[],usedNames=new Set();
     const uniquePath=(folder,filename)=>{
@@ -1303,12 +1344,19 @@
     const hasReferences=sorted.some(r=>(r.attachments||[]).length);
     if(hasReferences&&(originalMedia.size||recoveredDocuments.size||
        sorted.some(r=>(r.attachments||[]).some(a=>!a.image_data_uri&&!a.file_binary_key)))){
-      const save=confirm("Crear ZIP opcional con imágenes recuperadas, Word/Excel/PDF accesibles y manifiesto de archivos no recuperables?");
+      const save=confirm("Crear ZIP opcional con imágenes y documentos Word/Excel/PDF recuperables y un manifiesto de lo que falte?");
       if(save){
-        const archived=zipFromRecoveredMedia(sorted);
+        const unresolvedFiles=sorted.flatMap(r=>(r.attachments||[])
+          .filter(a=>!a.image_data_uri&&!a.file_binary_key));
+        const manualFiles=unresolvedFiles.length&&
+          confirm("Copilot no ha expuesto los bytes de "+unresolvedFiles.length+
+            " referencias. ¿Quieres añadir manualmente originales de tu ordenador al ZIP? (Opcional)")
+            ?await chooseLocalBackupFiles():[];
+        const archived=zipFromRecoveredMedia(sorted,manualFiles);
         downloadBlob(archived.blob,"copilot-v5.13_"+stamp+"_attachments.zip");
         console.log("[v5.13] ZIP contains",archived.images,"images and",
-          archived.documents,"documents; unresolved references listed in manifest.json");
+          archived.documents,"documents, including",manualFiles.length,
+          "local user selections; unresolved references listed in manifest.json");
       }
     }
   }catch(e){console.error("[v5.13] Export failed",e);}
