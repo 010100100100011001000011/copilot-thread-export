@@ -1544,7 +1544,7 @@
     const elapsed=Math.floor(duration/60000)+" min "+((duration%60000)/1000).toFixed(1)+" s";
     const contextUnnumbered=c.missing.length>0&&c.missing.length===c.unpositioned_events;
     const meta={
-      exporter_version:"6.0.0",status:!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":contextUnnumbered?"CONTEXT_EVENTS_OBSERVED_POSITIONS_UNVERIFIED":"PARTIAL",
+      exporter_version:"6.0.1",status:!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":contextUnnumbered?"CONTEXT_EVENTS_OBSERVED_POSITIONS_UNVERIFIED":"PARTIAL",
       chat_title:userTitle,chat_title_source:chatTitle.value?chatTitle.source:(userTitle?"user_confirmed":"unavailable"),
       expected_positions:c.expected,captured_positions:c.positioned,missing_positions:c.missing,
       historical_elements_exported:sorted.length,
