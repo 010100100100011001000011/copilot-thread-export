@@ -438,6 +438,8 @@
   // A file chip can identify an attachment without granting access to its
   // bytes. Never treat a filename, favicon or Office icon as file content.
   const recoveredDocuments=new Map();
+  const sourceDocuments=new Map(),sourceObservations=new Map();
+  const codeFiles=[];
   const MAX_DOC_BYTES=50*1024*1024,MAX_ARCHIVE_BYTES=250*1024*1024;
   let recoveredDocumentBytes=0,attachmentFetchAttempts=0;
   const docFetchStarted=Date.now(),documentFetchCache=new Map();
@@ -565,6 +567,46 @@
     }
   }
 
+
+  // Export actual fenced/code-editor blocks as editable files in ZIP.
+  // Do not reinterpret ordinary chat prose or inline snippets as code files.
+  function collectCodeFiles(sorted){
+    const extByLanguage={
+      javascript:"js",js:"js",typescript:"ts",ts:"ts",python:"py",py:"py",
+      c:"c",cpp:"cpp",cxx:"cpp",csharp:"cs","c#":"cs",java:"java",
+      json:"json",jsonl:"jsonl",csv:"csv",xml:"xml",yaml:"yaml",
+      yml:"yml",html:"html",css:"css",sql:"sql",bash:"sh",shell:"sh",
+      powershell:"ps1",ps1:"ps1",go:"go",rust:"rs",ruby:"rb",php:"php",
+      swift:"swift",kotlin:"kt",r:"r",markdown:"md",md:"md",
+      text:"txt","plain text":"txt",plaintext:"txt",mermaid:"mmd"
+    };
+    for(const r of sorted){
+      if(!r.html||!["assistant","user"].includes(r.role))continue;
+      const template=document.createElement("template");template.innerHTML=r.html;
+      let i=0;
+      for(const pre of template.content.querySelectorAll("pre")){
+        if(pre.classList.contains("captured-text"))continue;
+        if(pre.closest('[data-code-partial]')?.getAttribute("data-code-partial")==="true"){
+          // Include observed lines but explicitly mark as incomplete.
+        }
+        const code=pre.querySelector("code")||pre;
+        const raw=code.textContent||"";
+        if(!raw.trim())continue;
+        const wrapper=pre.closest(".archived-code-block");
+        const hint=(wrapper?.querySelector(".archived-code-language")?.textContent||
+          code.getAttribute("data-language")||
+          [...code.classList].find(c=>/^language-/i.test(c))?.slice(9)||"text")
+          .trim().toLowerCase();
+        const ext=extByLanguage[hint.replace(/^[{}]+|[{}]+$/g,"")]||"txt";
+        const partial=wrapper?.getAttribute("data-code-partial")==="true";
+        i++;
+        const filename="code_"+String(i).padStart(3,"0")+"."+ext;
+        codeFiles.push({position:r.position,filename,language:hint,
+          partial,bytes:new TextEncoder().encode(raw),
+          note:partial?"Code block was partially mounted; not a complete original":"Code extracted verbatim from captured block"});
+      }
+    }
+  }
   function zipFromRecoveredMedia(sorted){
     const encoder=new TextEncoder(),entries=[],catalog=[],usedNames=new Set();
     const uniquePath=(folder,filename)=>{
@@ -614,9 +656,20 @@
           note:"File content downloaded from browser-visible attachment resource"});
       }
     }
+    for(const code of codeFiles){
+      const name=uniquePath("position_"+code.position+"/code",code.filename);
+      entries.push({name,bytes:code.bytes});
+      catalog.push({position:code.position,name,bytes:code.bytes.length,
+        kind:"code",language:code.language,partial:code.partial,
+        note:code.note});
+    }
     const manifest=encoder.encode(JSON.stringify({
       description:"Offline archive of recoverable binary attachments. Missing references remain explicitly unresolved.",
       includes_documents:true,
+      includes_code_blocks:true,
+      html_images_optimized_for_viewing:true,
+      zip_images_unresized_browser_recovered_bytes:true,
+      html_image_max_side_px:1600,html_jpeg_quality:0.85,
       original_image_fidelity_guaranteed:false,
       captured_entries:catalog,
       unresolved_attachment_names:sorted.flatMap(r=>(r.attachments||[])
@@ -661,7 +714,10 @@
     end.v.setUint32(12,centralSize,true);end.v.setUint32(16,offset,true);
     return {blob:new Blob([...chunks,...central,end.a],{type:"application/zip"}),
       images:catalog.filter(x=>x.kind!=="document").length,
-      documents:catalog.filter(x=>x.kind==="document").length,catalog};
+      documents:catalog.filter(x=>x.kind==="document").length,
+      codes:catalog.filter(x=>x.kind==="code").length,
+      missing:sorted.reduce((n,r)=>n+(r.attachments||[]).filter(a=>!a.image_data_uri&&!a.file_binary_key).length,0),
+      catalog};
   }
   function downloadBlob(blob,name){
     const url=URL.createObjectURL(blob);
@@ -1170,6 +1226,7 @@
     const sorted=[...records.values(),...systemRows].sort((a,b)=>
       orderKey(a)-orderKey(b)||(a.first_seen_scan||0)-(b.first_seen_scan||0));
     await recoverDocumentAttachments(sorted);
+    collectCodeFiles(sorted);
     const dates=sorted.map(x=>x.message_timestamp).filter(Boolean).sort();
     // The ONLY user interaction happens at the end.
     const first=ask("Confirm thread START date",dates[0]?.slice(0,10));
