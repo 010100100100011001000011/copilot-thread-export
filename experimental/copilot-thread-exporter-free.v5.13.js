@@ -142,7 +142,8 @@
     const add=(raw,origin)=>{
       if(!raw||typeof raw!=="string")return;
       const trimmed=raw.trim();
-      if(!trimmed||trimmed.length>4096||/^javascript:/i.test(trimmed))return;
+      if(!trimmed||trimmed.length>(trimmed.startsWith("data:")?75*1024*1024:4096)||
+         /^javascript:/i.test(trimmed))return;
       let u;try{u=new URL(trimmed,location.href)}catch{return}
       if(!["https:","blob:","data:"].includes(u.protocol))return;
       if(u.protocol==="https:"&&!(
@@ -495,7 +496,7 @@
       const abort=setTimeout(()=>controller.abort(),12000);
       let response;
       try{response=await fetch(uri.href,{
-        credentials:uri.protocol==="https:"&&uri.origin===location.origin?"include":"omit",
+        credentials:uri.protocol==="https:"?"include":"omit",
         signal:controller.signal,redirect:"follow"});
       }finally{clearTimeout(abort);}
       if(!response.ok)return {error:"HTTP "+response.status};
@@ -545,8 +546,18 @@
       }
     }
   }
-  function zipFromRecoveredMedia(sorted){
-    const encoder=new TextEncoder(),entries=[],catalog=[];
+  function zipFromRecoveredMedia(sorted,manualFiles=[]){
+    const encoder=new TextEncoder(),entries=[],catalog=[],usedNames=new Set();
+    const uniquePath=(folder,filename)=>{
+      let safe=normalizedName(filename),path=folder+"/"+safe,n=1;
+      while(usedNames.has(path)){
+        const dot=safe.lastIndexOf(".");
+        const ext=dot>=0?safe.slice(dot):"";
+        const root=dot>=0?safe.slice(0,dot):safe;
+        path=folder+"/"+root+"__"+(n++)+ext;
+      }
+      usedNames.add(path);return path;
+    };
     const normalizedName=x=>String(x||"image").replace(/[\\/:"*?<>|\x00-\x1f]/g,"_").slice(0,100);
     for(const record of sorted){
       let k=0;
@@ -563,18 +574,45 @@
         const suffix=/^data:image\/png/i.test(uri)?".png":
           /^data:image\/webp/i.test(uri)?".webp":".jpg";
         const label=normalizedName(a.filename||("image_"+(++k)+suffix));
-        const name="position_"+record.position+"/"+label;
+        const name=uniquePath("position_"+record.position,label);
         entries.push({name,bytes});
         catalog.push({position:record.position,name,bytes:bytes.length,
           original_file_verified:false,
           note:"Bytes recovered from browser image, may be preview/reencoded"});
       }
     }
+    for(const record of sorted){
+      for(const a of record.attachments||[]){
+        if(!a.file_binary_key)continue;
+        const bytes=recoveredDocuments.get(a.file_binary_key);
+        if(!bytes?.length)continue;
+        const name=uniquePath("position_"+record.position,a.filename||"recovered_document.bin");
+        entries.push({name,bytes});
+        a.zip_path=name;
+        catalog.push({position:record.position,name,bytes:bytes.length,
+          kind:"document",recovery:"browser_downloaded_and_signature_validated",
+          original_file_verified:false,
+          note:"File content downloaded from browser-visible attachment resource"});
+      }
+    }
+    for(const f of manualFiles){
+      const name=uniquePath("user_selected",f.filename);
+      entries.push({name,bytes:f.bytes});
+      catalog.push({position:null,name,bytes:f.bytes.length,kind:"document",
+        recovery:"user_selected_local_file",original_file_verified:false,
+        note:"User supplied via local file picker, not linked to a specific chat turn"});
+    }
     const manifest=encoder.encode(JSON.stringify({
-      description:"Recovered media; no guarantee of original uploaded-file fidelity",
+      description:"Offline archive of recoverable binary attachments. Missing references remain explicitly unresolved.",
+      includes_documents:true,
+      original_image_fidelity_guaranteed:false,
       captured_entries:catalog,
       unresolved_attachment_names:sorted.flatMap(r=>(r.attachments||[])
-        .filter(a=>!a.image_data_uri).map(a=>({position:r.position,name:a.filename||null})))
+        .filter(a=>!a.image_data_uri&&!a.file_binary_key).map(a=>({
+          position:r.position,name:a.filename||null,
+          kind:a.kind||"unknown",declared_group_count:a.count||null,
+          reason:a.file_recovery_status||"No retrievable binary source"
+        })))
     },null,2));
     entries.push({name:"manifest.json",bytes:manifest});
     const crc32=bytes=>{
@@ -610,7 +648,8 @@
     end.v.setUint16(8,entries.length,true);end.v.setUint16(10,entries.length,true);
     end.v.setUint32(12,centralSize,true);end.v.setUint32(16,offset,true);
     return {blob:new Blob([...chunks,...central,end.a],{type:"application/zip"}),
-      images:catalog.length,catalog};
+      images:catalog.filter(x=>x.kind!=="document").length,
+      documents:catalog.filter(x=>x.kind==="document").length,catalog};
   }
   function downloadBlob(blob,name){
     const url=URL.createObjectURL(blob);
@@ -1118,6 +1157,7 @@
       r.following_position?r.following_position-0.5:Infinity);
     const sorted=[...records.values(),...systemRows].sort((a,b)=>
       orderKey(a)-orderKey(b)||(a.first_seen_scan||0)-(b.first_seen_scan||0));
+    await recoverDocumentAttachments(sorted);
     const dates=sorted.map(x=>x.message_timestamp).filter(Boolean).sort();
     // The ONLY user interaction happens at the end.
     const first=ask("Confirm thread START date",dates[0]?.slice(0,10));
@@ -1188,6 +1228,11 @@
       external_links_found:externalLinks.size,
       external_links_not_downloaded:[...externalLinks.values()],
       images_embedded:embedded,
+      document_bytes_recovered:recoveredDocumentBytes,
+      documents_recovered:recoveredDocuments.size,
+      document_files_unavailable:sorted.flatMap(r=>(r.attachments||[])
+        .filter(a=>a.kind==="file"&&!a.file_binary_key)
+        .map(a=>({position:r.position,filename:a.filename||null,status:a.file_recovery_status||"unavailable"}))),
       external_attachment_references:unresolved.length,
       unresolved_attachment_references:unresolved,
       message_type_dictionary:MESSAGE_TYPES.map(x=>({id:x.id,role:x.role})),
@@ -1204,7 +1249,10 @@
       elapsed_ms:duration,elapsed_human:elapsed,
       warning:"Index coverage is not a guarantee of full message bodies. Full-content fidelity checks remain necessary before deleting the source."
     };
-    const slim=r=>({...r,html:undefined,attachments:(r.attachments||[]).map(a=>({...a,image_data_uri:undefined,embedded_in_html:!!a.image_data_uri}))});
+    const slim=r=>({...r,html:undefined,attachments:(r.attachments||[]).map(a=>{
+      const {image_data_uri,file_source_candidates,image_source_url,...safe}=a;
+      return {...safe,embedded_in_html:!!image_data_uri,binary_recovered:!!a.file_binary_key};
+    })});
     const jsonl=JSON.stringify({type:"metadata",...meta})+"\n"+
       sorted.map((r,i)=>JSON.stringify({order:i+1,...slim(r)})).join("\n")+"\n";
     const style='body{font:14px/1.55 system-ui,sans-serif;max-width:1100px;margin:30px auto;padding:0 14px}article{border:1px solid #ccc;padding:16px;margin:20px 0;min-width:0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}img{max-width:100%;height:auto}figure{border:1px solid #ddd;padding:12px}article table{display:block;max-width:100%;overflow-x:auto;white-space:nowrap}article pre{max-width:100%;overflow-x:auto}article table th,article table td{border:1px solid #ddd;padding:6px 9px}article table{border-collapse:collapse}article pre.captured-text{white-space:pre-wrap;font:inherit}.archived-code-block{border:1px solid #ddd;border-radius:6px;overflow:hidden;margin:12px 0}.archived-code-language{background:#f6f6f6;padding:7px 12px;color:#444;font-size:12px}.archived-code-block pre.archived-code-text{white-space:pre!important;overflow-wrap:normal!important;word-break:normal!important;overflow-x:auto;margin:0;padding:12px;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:4}.archived-code-warning{color:#8c3b14;font-size:12px;padding:0 12px}';
@@ -1226,7 +1274,8 @@
       '<p><b>External links not downloaded:</b> '+externalLinks.size+
       '. These may be ordinary websites, documents, image sources or permission-restricted services.</p>'+
       '<p><b>Total recovery time:</b> '+htmlEscape(elapsed)+'</p>'+
-      '<p>Embedded attachment images: '+embedded+'. Linked attachment references NOT embedded: '+unresolved.length+'. '+
+      '<p>Embedded attachment images: '+embedded+'. Documents with validated bytes available for ZIP: '+recoveredDocuments.size+
+      '. Linked attachment references NOT embedded in HTML: '+unresolved.length+'. '+
       'If you delete the original conversation or lose access to linked services, referenced documents and files may become unavailable. '+
       'Download and save important attachments separately before deleting the original conversation.</p>'+
       '<p>System/context events captured: '+systemRows.length+
@@ -1242,19 +1291,24 @@
         ((r.attachments||[]).length?'<section><h4>Attachments</h4>'+(r.attachments||[]).map(a=>a.kind==="file_group"?
         '<p><b>'+htmlEscape(a.count||"?")+' file references</b> shown by Copilot; names and binaries unavailable. Repeated across turns may refer to the same project files.</p>':
         '<figure><figcaption>'+htmlEscape(a.filename||"Unnamed attachment")+'</figcaption>'+
-        (a.image_data_uri?'<img alt="Attached image" src="'+htmlEscape(a.image_data_uri)+'">':'<p>Attachment metadata only; file content unavailable</p>')+'</figure>').join('')+'</section>':'')+
+        (a.image_data_uri?'<img alt="Attached image" src="'+htmlEscape(a.image_data_uri)+'">':
+        a.file_binary_key?'<p>Document bytes verified and available in optional ZIP: '+htmlEscape(a.binary_bytes)+' bytes.</p>':
+        '<p>Attachment reference only; file content not accessible to exporter</p>')+'</figure>').join('')+'</section>':'')+
         '</article>').join("\n")+'<footer style="margin:38px 0 15px;border-top:1px solid #bbb;padding-top:12px;color:#555;font-size:12px;text-align:center">A service by &copy; <a href="https://github.com/010100100100011001000011" rel="noopener noreferrer" target="_blank"><strong>Teclive</strong></a> that makes your life easier.</footer></body></html>';
     const stamp=new Date().toISOString().replace(/[:.]/g,"-");
     console.log("[v5.13] EXPORT RESULT",meta);
     download(html,"text/html;charset=utf-8","copilot-v5.13_"+stamp+".html");
     await wait(850);
     download(jsonl,"application/x-ndjson;charset=utf-8","copilot-v5.13_"+stamp+".jsonl");
-    if(originalMedia.size){
-      const save=confirm("Guardar también un ZIP opcional con los bytes de imágenes recuperados (sin reducir)?");
+    const hasReferences=sorted.some(r=>(r.attachments||[]).length);
+    if(hasReferences&&(originalMedia.size||recoveredDocuments.size||
+       sorted.some(r=>(r.attachments||[]).some(a=>!a.image_data_uri&&!a.file_binary_key)))){
+      const save=confirm("Crear ZIP opcional con imágenes recuperadas, Word/Excel/PDF accesibles y manifiesto de archivos no recuperables?");
       if(save){
         const archived=zipFromRecoveredMedia(sorted);
-        downloadBlob(archived.blob,"copilot-v5.13_"+stamp+"_media.zip");
-        console.log("[v5.13] ZIP contains",archived.images,"recovered image entries; uploaded originals not independently verified");
+        downloadBlob(archived.blob,"copilot-v5.13_"+stamp+"_attachments.zip");
+        console.log("[v5.13] ZIP contains",archived.images,"images and",
+          archived.documents,"documents; unresolved references listed in manifest.json");
       }
     }
   }catch(e){console.error("[v5.13] Export failed",e);}
