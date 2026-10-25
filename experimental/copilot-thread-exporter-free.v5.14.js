@@ -1148,16 +1148,21 @@
   }
   function sourceDialog(){
     return [...document.querySelectorAll('[role="dialog"],[aria-modal="true"],[data-testid*="sources"],[data-testid*="citation"]')]
-      .filter(el=>displayed(el)&&
-        /(?:sources|origini|citations|riferimenti|referencias)/i.test(
-          (el.innerText||"").slice(0,350)))
-      .sort((a,b)=>b.getBoundingClientRect().width*a.getBoundingClientRect().height-
-        a.getBoundingClientRect().width*b.getBoundingClientRect().height)[0]||null;
+      .filter(el=>{
+        const r=el.getBoundingClientRect();
+        return displayed(el)&&r.width>180&&r.height>180&&
+          /(?:sources|origini|citations|riferimenti|referencias)/i.test(
+            (el.innerText||"").slice(0,350));
+      })
+      .sort((a,b)=>{
+        const ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
+        return br.width*br.height-ar.width*ar.height;
+      })[0]||null;
   }
   function collectVisibleSources(dialog,position){
     if(!dialog)return 0;
     const list=[...dialog.querySelectorAll(
-      '[role="listitem"],li,a[href],[data-testid*="citation"],[data-testid*="source"]')];
+      '[role="listitem"],[role="button"],button,li,a[href],[data-testid*="citation"],[data-testid*="source"]')];
     let added=0;
     for(const el of list){
       const text=(el.innerText||el.getAttribute("aria-label")||el.getAttribute("title")||"")
@@ -1167,7 +1172,9 @@
       const fileMarker=validAttachmentFilename(text)||!!el.querySelector(
         'img[src*="item-types/"],img[src*="file-type"],[data-file-id],[data-attachment-id]');
       const candidates=fileCandidates(el);
-      if(!fileMarker&&!candidates.length)continue;
+      const plausibleCitationRow=el.matches('[role="listitem"],li,[role="button"],button')&&
+        !/^(?:next|previous|prev|feedback|download|open|options|more|pi[uù]|opzioni|successivo|precedente|back|indietro)$/i.test(text);
+      if(!fileMarker&&!candidates.length&&!plausibleCitationRow)continue;
       // Prefer a short explicit title, never promote the entire panel body
       // to a fictional document filename.
       const lines=(el.innerText||"").split("\n").map(x=>x.trim()).filter(Boolean);
@@ -1196,7 +1203,8 @@
     for(const bot of list.querySelectorAll(s.bot)){
       const pos=position(bot);
       if(!pos||inspectedSourceTurns.has(pos))continue;
-      const trigger=[...bot.querySelectorAll('button,[role="button"]')].find(el=>{
+      const parentTurn=bot.closest(s.turn)||bot.parentElement||bot;
+      const trigger=[...parentTurn.querySelectorAll('button,[role="button"]')].find(el=>{
         if(!displayed(el))return false;
         const txt=(el.getAttribute("aria-label")||el.getAttribute("title")||
           el.innerText||"").trim();
