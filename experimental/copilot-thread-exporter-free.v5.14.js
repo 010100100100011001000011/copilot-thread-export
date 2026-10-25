@@ -1085,12 +1085,101 @@
       }
     }
   }
+  // Sources/Origini may hold document references that are not present
+  // inside the user's attachment chips. Observe only the assistant's own
+  // sources controls, never browse invented URLs.
+  const inspectedSourceTurns=new Set();
+  const sourcePanelLabel=/^(?:sources|origini|citations|references|referencias|riferimenti|fontes|quellen)(?:\s*\d+)?$/i;
+  let sourcePanelOpens=0;
+  function displayed(el){
+    const r=el.getBoundingClientRect();
+    return r.width>6&&r.height>6&&getComputedStyle(el).visibility!=="hidden";
+  }
+  function sourceDialog(){
+    return [...document.querySelectorAll('[role="dialog"],[aria-modal="true"],[data-testid*="sources"],[data-testid*="citation"]')]
+      .filter(el=>displayed(el)&&
+        /(?:sources|origini|citations|riferimenti|referencias)/i.test(
+          (el.innerText||"").slice(0,350)))
+      .sort((a,b)=>b.getBoundingClientRect().width*a.getBoundingClientRect().height-
+        a.getBoundingClientRect().width*b.getBoundingClientRect().height)[0]||null;
+  }
+  function collectVisibleSources(dialog,position){
+    if(!dialog)return 0;
+    const list=[...dialog.querySelectorAll(
+      '[role="listitem"],li,a[href],[data-testid*="citation"],[data-testid*="source"]')];
+    let added=0;
+    for(const el of list){
+      const text=(el.innerText||el.getAttribute("aria-label")||el.getAttribute("title")||"")
+        .trim().replace(/\s+/g," ");
+      if(text.length<3||text.length>190||
+         /^(?:origini|sources|riferimenti|references|citazioni|citations|personalizzazione|customization|close|chiudi)$/i.test(text))continue;
+      const fileMarker=validAttachmentFilename(text)||!!el.querySelector(
+        'img[src*="item-types/"],img[src*="file-type"],[data-file-id],[data-attachment-id]');
+      const candidates=fileCandidates(el);
+      if(!fileMarker&&!candidates.length)continue;
+      // Prefer a short explicit title, never promote the entire panel body
+      // to a fictional document filename.
+      const lines=(el.innerText||"").split("\n").map(x=>x.trim()).filter(Boolean);
+      const title=lines.find(x=>x.length>2&&x.length<130&&
+        !/^(?:te[c]? live modificato|last modified|file|citazioni)$/i.test(x))||
+        text.slice(0,130);
+      const key=title.toLowerCase().replace(/\s+/g," ").trim();
+      if(!key)continue;
+      if(!sourceObservations.has(key)){
+        sourceObservations.set(key,{title,positions:[],file_source_candidates:[],
+          category:"copilot_citation_source",bytes_recovered:false,
+          note:"Reference exposed by Copilot Sources panel; source file bytes may be inaccessible"});
+      }
+      const item=sourceObservations.get(key);
+      if(!item.positions.includes(position))item.positions.push(position);
+      for(const cand of candidates){
+        if(!item.file_source_candidates.some(x=>x.url===cand.url))
+          item.file_source_candidates.push(cand);
+      }
+      added++;
+    }
+    return added;
+  }
+  async function harvestCitationSources(){
+    if(sourcePanelOpens>=24)return;
+    for(const bot of list.querySelectorAll(s.bot)){
+      const pos=position(bot);
+      if(!pos||inspectedSourceTurns.has(pos))continue;
+      const trigger=[...bot.querySelectorAll('button,[role="button"]')].find(el=>{
+        if(!displayed(el))return false;
+        const txt=(el.getAttribute("aria-label")||el.getAttribute("title")||
+          el.innerText||"").trim();
+        return sourcePanelLabel.test(txt);
+      });
+      if(!trigger)continue;
+      inspectedSourceTurns.add(pos);sourcePanelOpens++;
+      try{
+        trigger.click();
+        await wait(320);
+        const dialog=sourceDialog();
+        if(dialog){
+          const added=collectVisibleSources(dialog,pos);
+          console.log("[v5.14] Sources panel",{
+            position:pos,reference_entries:added});
+          const close=[...dialog.querySelectorAll('button,[role="button"]')].find(el=>
+            /^(?:close|chiudi|cerrar|fermer|schließen|dismiss)$/i.test(
+              (el.getAttribute("aria-label")||el.getAttribute("title")||
+               el.innerText||"").trim()));
+          if(close)close.click();
+          else dialog.dispatchEvent(new KeyboardEvent("keydown",
+            {key:"Escape",code:"Escape",bubbles:true}));
+        }
+      }catch(err){console.warn("[v5.14] Sources panel not accessible",pos,String(err));}
+      if(sourceDialog())return; // Stop if unable to close an overlay
+    }
+  }
   async function traverse(dir,label,limit=cfg.limit){
     let still=0;
     for(let i=0;i<limit;i++){
       step++;scan(label);reconcileContextPositions();reconcileTrailingContext();
       const before=visible(),count=records.size;
       await harvestDeferredMedia();
+      await harvestCitationSources();
       move(dir);await wait(cfg.delay);scan(label);
       reconcileContextPositions();reconcileTrailingContext();
       const after=visible();
