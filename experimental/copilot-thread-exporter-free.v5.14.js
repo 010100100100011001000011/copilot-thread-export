@@ -7,6 +7,11 @@
 (async () => {
   "use strict";
   const guard = "__copilotFreeExporterV514";
+  // All exporter UI is in English; preserve original chat languages verbatim.
+  const UI=Object.freeze({
+    zipConfirm:"Save optional ZIP with recovered files from THIS conversation (highest-resolution images, documents, code) and a manifest of unavailable references?",
+    title:"Current FULL conversation title (Copilot sidebar). Automatic detection unavailable:"
+  });
   if (window[guard]) return console.warn("Exporter already running");
   window[guard] = true;
   const cfg = {delay:750,step:135,limit:900,stagnant:26,gapPasses:2,gapSteps:55,replyWait:1800,settleMs:1100};
@@ -1209,7 +1214,7 @@
     }
     if(!chatTitle.value)chatTitle=getChatTitle();
     const userTitle=chatTitle.value||(prompt(
-      "Current COMPLETE conversation title (Copilot sidebar). The title could not be verified automatically:",
+      UI.title,
       "")||"").trim()||null;
     // Do not cache user-entered names as automatic titles on later exports.
     const duration=Date.now()-startMs;
@@ -1297,7 +1302,7 @@
         '. Unexplained indexed gaps: '+(gapsToRecover().join(", ")||"none"))+
       '. Index coverage does not prove that every response is fully rendered. Check important replies before deletion.</p></section>';
     const html='<!doctype html><html><head><meta charset="utf-8"><title>'+htmlEscape(userTitle||"Copilot v5.14 export")+'</title><style>'+style+'</style></head><body><h1>'+htmlEscape(userTitle||"Copilot Thread v5.14")+'</h1>'+notice+
-      sorted.map((r,i)=>'<article data-position="'+htmlEscape(r.position)+'"><h3>'+htmlEscape(r.role==="user"?"Usuario":r.role==="assistant"?"Copilot":r.role==="service"?"Copilot · aviso de servicio":"Evento de contexto")+' <small style="font-weight:normal;color:#777">#'+htmlEscape(r.position||i+1)+'</small></h3><small>'+htmlEscape(r.message_timestamp||"Timestamp unavailable")+'</small>'+
+      sorted.map((r,i)=>'<article data-position="'+htmlEscape(r.position)+'"><h3>'+htmlEscape(r.role==="user"?"User":r.role==="assistant"?"Copilot":r.role==="service"?"Copilot · service notice":"Context event")+' <small style="font-weight:normal;color:#777">#'+htmlEscape(r.position||i+1)+'</small></h3><small>'+htmlEscape(r.message_timestamp||"Timestamp unavailable")+'</small>'+
         readableHTML(r)+
         ((r.attachments||[]).length?'<section><h4>Attachments</h4>'+(r.attachments||[]).map(a=>a.kind==="file_group"?
         '<p><b>'+htmlEscape(a.count||"?")+' file references</b> shown by Copilot; names and binaries unavailable. Repeated across turns may refer to the same project files.</p>':
@@ -1314,7 +1319,7 @@
     const hasReferences=sorted.some(r=>(r.attachments||[]).length);
     if(originalMedia.size||recoveredDocuments.size||sourceDocuments.size||codeFiles.length||
        sorted.some(r=>(r.attachments||[]).length)){
-      const save=confirm("Guardar ZIP adicional con TODOS los archivos recuperables de ESTA conversación (imágenes a resolución disponible, documentos y bloques de código) e inventario de no recuperados?");
+      const save=confirm(UI.zipConfirm);
       if(save){
         const archived=zipFromRecoveredMedia(sorted);
         downloadBlob(archived.blob,"copilot-v5.14_"+stamp+"_attachments.zip");
