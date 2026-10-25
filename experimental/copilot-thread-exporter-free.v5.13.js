@@ -428,6 +428,123 @@
       record.html=template.innerHTML;
     }
   }
+
+  // A file chip can identify an attachment without granting access to its
+  // bytes. Never treat a filename, favicon or Office icon as file content.
+  const recoveredDocuments=new Map();
+  const MAX_DOC_BYTES=50*1024*1024,MAX_ARCHIVE_BYTES=250*1024*1024;
+  let recoveredDocumentBytes=0;
+  const fileExtension=name=>(String(name||"").match(/\.([a-z0-9]{1,8})$/i)||[])[1]?.toLowerCase()||null;
+  function binaryFormat(bytes,filename,mime){
+    const eq=(...a)=>a.every((v,i)=>bytes[i]===v);
+    const ext=fileExtension(filename);
+    const pdf=eq(0x25,0x50,0x44,0x46,0x2d);
+    const zip=eq(0x50,0x4b,0x03,0x04)||eq(0x50,0x4b,0x05,0x06);
+    const ole=eq(0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1);
+    const png=eq(0x89,0x50,0x4e,0x47),jpg=eq(0xff,0xd8,0xff);
+    const gif=eq(0x47,0x49,0x46,0x38);
+    const webp=eq(0x52,0x49,0x46,0x46)&&
+      String.fromCharCode(...bytes.slice(8,12))==="WEBP";
+    const isHtml=/^\s*(?:<!doctype\s+html|<html|<script|<head|<body)/i.test(
+      new TextDecoder().decode(bytes.slice(0,256)));
+    if(isHtml)return {ok:false,reason:"HTML login/error page, not attachment"};
+    if(ext==="pdf")return {ok:pdf,kind:"pdf",reason:"PDF signature mismatch"};
+    if(["docx","xlsx","pptx","odt","ods","odp","zip","epub"].includes(ext))
+      return {ok:zip,kind:ext,reason:"ZIP/Office signature mismatch"};
+    if(["doc","xls","ppt"].includes(ext))
+      return {ok:ole,kind:ext,reason:"legacy Office signature mismatch"};
+    if(["png","jpg","jpeg","gif","webp"].includes(ext)){
+      const valid=ext==="png"?png:["jpg","jpeg"].includes(ext)?jpg:ext==="gif"?gif:webp;
+      return {ok:valid,kind:ext,reason:"image signature mismatch"};
+    }
+    if(ext==="7z")return {ok:eq(0x37,0x7a,0xbc,0xaf,0x27,0x1c),kind:ext,reason:"7z signature mismatch"};
+    if(ext==="rar")return {ok:eq(0x52,0x61,0x72,0x21),kind:ext,reason:"RAR signature mismatch"};
+    if(["csv","txt","json","xml","md","html","htm","rtf","py","js","ts","java","c","cpp"].includes(ext)){
+      if(["html","htm"].includes(ext))return {ok:false,reason:"HTML not accepted as document response"};
+      const containsNul=bytes.slice(0,4096).some(x=>x===0);
+      return {ok:!containsNul,kind:ext,reason:"text extension has binary data"};
+    }
+    if(pdf)return {ok:true,kind:"pdf",inferred_filename:"document.pdf"};
+    if(zip&&/application\/(?:vnd\.openxmlformats|zip|epub\+zip)|opendocument/i.test(mime||""))
+      return {ok:true,kind:"zip",inferred_filename:"document.zip"};
+    return {ok:false,reason:"No independently validated document file signature"};
+  }
+  function candidateFileName(raw,disposition){
+    if(disposition){
+      const star=disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      if(star){try{const n=decodeURIComponent(star[1].replace(/["']/g,""));
+        if(validAttachmentFilename(n))return n;}catch{}}
+      const standard=disposition.match(/filename="?([^";]+)"?/i);
+      if(standard&&validAttachmentFilename(standard[1]))return standard[1];
+    }
+    try{
+      const u=new URL(raw,location.href);
+      const last=decodeURIComponent(u.pathname.split("/").pop()||"");
+      return validAttachmentFilename(last)?last:null;
+    }catch{return null}
+  }
+  async function getDocumentBytes(candidate,fileName){
+    const url=candidate?.url||"";
+    let uri;try{uri=new URL(url,location.href)}catch{return {error:"Invalid attachment URL"}}
+    if(!["https:","blob:","data:"].includes(uri.protocol))return {error:"Unsupported URL scheme"};
+    if(uri.protocol==="https:"&&!(
+      uri.origin===location.origin||/(^|\.)(?:microsoft\.com|sharepoint\.com|office\.com|office\.net|onedrive\.com|live\.com|windows\.net)$/.test(uri.hostname)
+    ))return {error:"Not a Copilot/Microsoft attachment origin"};
+    try{
+      const controller=new AbortController();
+      const abort=setTimeout(()=>controller.abort(),12000);
+      let response;
+      try{response=await fetch(uri.href,{
+        credentials:uri.protocol==="https:"&&uri.origin===location.origin?"include":"omit",
+        signal:controller.signal,redirect:"follow"});
+      }finally{clearTimeout(abort);}
+      if(!response.ok)return {error:"HTTP "+response.status};
+      const declared=Number(response.headers.get("content-length"));
+      if(declared>MAX_DOC_BYTES)return {error:"File exceeds 50 MB limit"};
+      const blob=await response.blob();
+      if(!blob.size||blob.size>MAX_DOC_BYTES)return {error:"Empty or oversized file"};
+      const bytes=new Uint8Array(await blob.arrayBuffer());
+      const name=fileName||candidateFileName(uri.href,response.headers.get("content-disposition"));
+      const sniff=binaryFormat(bytes,name,response.headers.get("content-type"));
+      if(!sniff.ok)return {error:sniff.reason||"Unverified content"};
+      return {bytes,name:name||sniff.inferred_filename||null,kind:sniff.kind,
+        content_type:response.headers.get("content-type"),method:"browser_attachment_resource"};
+    }catch(err){return {error:"Browser fetch blocked, expired, or requires separate permission"}}
+  }
+  async function recoverDocumentAttachments(sorted){
+    for(const record of sorted){
+      for(let i=0;i<(record.attachments||[]).length;i++){
+        const attachment=record.attachments[i];
+        if(attachment.image_data_uri||attachment.kind==="image")continue;
+        attachment.file_recovery_status="not_available_in_dom";
+        if(attachment.kind==="file_group"&&!attachment.filename)continue;
+        let candidates=attachment.file_source_candidates||[];
+        if(!candidates.length)continue;
+        for(const candidate of candidates.slice(0,6)){
+          if(recoveredDocumentBytes>=MAX_ARCHIVE_BYTES){
+            attachment.file_recovery_status="archive_size_limit";break;
+          }
+          const response=await getDocumentBytes(candidate,attachment.filename);
+          if(!response.bytes){
+            attachment.file_recovery_status=response.error||"unavailable";continue;
+          }
+          if(recoveredDocumentBytes+response.bytes.length>MAX_ARCHIVE_BYTES){
+            attachment.file_recovery_status="archive_size_limit";break;
+          }
+          const key="document:"+record.position+":"+i;
+          recoveredDocuments.set(key,response.bytes);
+          recoveredDocumentBytes+=response.bytes.length;
+          attachment.file_binary_key=key;
+          attachment.filename=attachment.filename||response.name;
+          attachment.file_recovery_status="bytes_verified_for_zip";
+          attachment.binary_bytes=response.bytes.length;
+          attachment.binary_source=response.method;
+          attachment.note="Actual browser-retrieved binary verified by file signature";
+          break;
+        }
+      }
+    }
+  }
   function zipFromRecoveredMedia(sorted){
     const encoder=new TextEncoder(),entries=[],catalog=[];
     const normalizedName=x=>String(x||"image").replace(/[\\/:"*?<>|\x00-\x1f]/g,"_").slice(0,100);
