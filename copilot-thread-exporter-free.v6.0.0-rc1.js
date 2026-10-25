@@ -653,10 +653,16 @@
         const ext=extByLanguage[hint.replace(/^[{}]+|[{}]+$/g,"")]||"txt";
         const partial=wrapper?.getAttribute("data-code-partial")==="true";
         i++;
-        const filename="code_"+String(i).padStart(3,"0")+"."+ext;
+        // Many Copilot "Plain Text" blocks are ASCII diagrams, flow charts,
+        // UI examples or quoted text. Preserve them but do NOT claim code.
+        const isCode=!["text","plain text","plaintext"].includes(hint);
+        const filename=(isCode?"code_":"text_")+String(i).padStart(3,"0")+"."+ext;
         codeFiles.push({position:r.position,filename,language:hint,
+          kind:isCode?"code":"preformatted_text",
           partial,bytes:new TextEncoder().encode(raw),
-          note:partial?"Code block was partially mounted; not a complete original":"Code extracted verbatim from captured block"});
+          note:partial?"Observed part of a virtualized block; original completeness unverified":
+            (isCode?"Code extracted verbatim from captured block":
+              "Preformatted text / diagram extracted verbatim; NOT necessarily executable code")});
       }
     }
   }
@@ -718,10 +724,12 @@
         note:"Document obtained from a browser-visible Copilot citation resource"});
     }
     for(const code of codeFiles){
-      const name=uniquePath("position_"+code.position+"/code",code.filename);
+      const kind=code.kind==="code"?"code":"preformatted_text";
+      const name=uniquePath("position_"+code.position+
+        (kind==="code"?"/code":"/preformatted"),code.filename);
       entries.push({name,bytes:code.bytes});
       catalog.push({position:code.position,name,bytes:code.bytes.length,
-        kind:"code",language:code.language,partial:code.partial,
+        kind,language:code.language,partial:code.partial,
         note:code.note});
     }
     const manifest=encoder.encode(JSON.stringify({
@@ -730,6 +738,8 @@
         [...sourceObservations.values()].some(x=>x.recovery_status!=="project_context_reference_not_included"),
       includes_documents:catalog.some(x=>x.kind==="document"||x.kind==="project_context_document"),
       includes_code_blocks:catalog.some(x=>x.kind==="code"),
+      includes_preformatted_text:catalog.some(x=>x.kind==="preformatted_text"),
+      recovered_preformatted_text_count:catalog.filter(x=>x.kind==="preformatted_text").length,
       recovered_image_count:catalog.filter(x=>x.kind==="image").length,
       recovered_document_count:catalog.filter(x=>x.kind==="document").length,
       recovered_project_context_document_count:catalog.filter(x=>x.kind==="project_context_document").length,
@@ -787,6 +797,7 @@
       documents:catalog.filter(x=>x.kind==="document").length,
       project_context_documents:catalog.filter(x=>x.kind==="project_context_document").length,
       codes:catalog.filter(x=>x.kind==="code").length,
+      preformatted:catalog.filter(x=>x.kind==="preformatted_text").length,
       missing:sorted.reduce((n,r)=>n+(r.attachments||[]).filter(a=>!a.image_data_uri&&!a.file_binary_key).length,0),
       catalog};
   }
@@ -1550,7 +1561,8 @@
       sources_panel_container_detected:sourcePanelsVisible,
       sources_panel_container_not_detected:sourcePanelDetectionFailures,
       sources_documents_recovered:sourceDocuments.size,
-      exportable_code_blocks:codeFiles.length,
+      exportable_code_blocks:codeFiles.filter(x=>x.kind==="code").length,
+      exportable_preformatted_text_blocks:codeFiles.filter(x=>x.kind==="preformatted_text").length,
       document_bytes_recovered:recoveredDocumentBytes,
       documents_recovered:recoveredDocuments.size,
       document_files_unavailable:sorted.flatMap(r=>(r.attachments||[])
@@ -1614,10 +1626,12 @@
       '<h3>What is saved in each archive file</h3>'+
       '<p><b>HTML:</b> complete captured conversation, diagrams, code and viewable images. Images larger than 1600 pixels are optimized for viewing (JPEG quality target: 85% when applicable).</p>'+
       '<p><b>JSONL:</b> messages, chronology, classifications and integrity metadata without embedded binary payloads.</p>'+
-      '<p><b>Optional ZIP:</b> browser-recovered images at their highest available resolution WITHOUT HTML resizing; downloaded Word/Excel/PDF and other verified chat files; code blocks; and manifest.json. Project-context documents are separate and included only after explicit approval, if their file bytes are accessible. No unrelated local files are requested.</p>'+
+      '<p><b>Optional ZIP:</b> browser-recovered images at their highest available resolution WITHOUT HTML resizing; downloaded Word/Excel/PDF and other verified chat files; genuine code blocks plus separately labeled preformatted text/diagrams; and manifest.json. Project-context documents are separate and included only after explicit approval, if their file bytes are accessible. No unrelated local files are requested.</p>'+
       '<p><b>ZIP-eligible items:</b> '+originalMedia.size+' distinct browser image payloads, '+
       (recoveredDocuments.size+sourceDocuments.size)+' downloadable document records, '+
-      codeFiles.length+' code blocks. Unresolved attachment references: '+unresolved.length+
+      codeFiles.filter(x=>x.kind==="code").length+' code blocks and '+
+      codeFiles.filter(x=>x.kind==="preformatted_text").length+
+      ' preformatted text/diagram blocks. Unresolved attachment references: '+unresolved.length+
       '. Additional Sources-panel references not recovered: '+sourceInventory.filter(x=>!x.bytes_recovered).length+'.</p>'+
       '<p>Embedded attachment images: '+embedded+'. Documents with validated bytes available for ZIP: '+
       (recoveredDocuments.size+sourceDocuments.size)+
@@ -1656,7 +1670,8 @@
         const archived=zipFromRecoveredMedia(sorted);
         downloadBlob(archived.blob,"copilot-v6.0.0-rc1_"+stamp+"_attachments.zip");
         console.log("[v6.0.0-rc1] ZIP",archived.images,"images,",archived.documents,
-          "documents,",archived.codes,"code blocks,",archived.missing,"unavailable references");
+          "documents,",archived.codes,"code blocks,",archived.preformatted,
+          "preformatted text/diagrams,",archived.missing,"unavailable references");
       }
     }
   }catch(e){console.error("[v6.0.0-rc1] Export failed",e);}
