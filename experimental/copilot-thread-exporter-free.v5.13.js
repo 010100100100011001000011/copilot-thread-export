@@ -434,7 +434,8 @@
   // bytes. Never treat a filename, favicon or Office icon as file content.
   const recoveredDocuments=new Map();
   const MAX_DOC_BYTES=50*1024*1024,MAX_ARCHIVE_BYTES=250*1024*1024;
-  let recoveredDocumentBytes=0;
+  let recoveredDocumentBytes=0,attachmentFetchAttempts=0;
+  const docFetchStarted=Date.now(),documentFetchCache=new Map();
   const fileExtension=name=>(String(name||"").match(/\.([a-z0-9]{1,8})$/i)||[])[1]?.toLowerCase()||null;
   function binaryFormat(bytes,filename,mime){
     const eq=(...a)=>a.every((v,i)=>bytes[i]===v);
@@ -493,7 +494,7 @@
     ))return {error:"Not a Copilot/Microsoft attachment origin"};
     try{
       const controller=new AbortController();
-      const abort=setTimeout(()=>controller.abort(),12000);
+      const abort=setTimeout(()=>controller.abort(),6500);
       let response;
       try{response=await fetch(uri.href,{
         credentials:uri.protocol==="https:"?"include":"omit",
@@ -522,10 +523,20 @@
         let candidates=attachment.file_source_candidates||[];
         if(!candidates.length)continue;
         for(const candidate of candidates.slice(0,6)){
+          if(attachmentFetchAttempts>=12||Date.now()-docFetchStarted>26000){
+            attachment.file_recovery_status="automatic_download_time_budget_exceeded";
+            break;
+          }
           if(recoveredDocumentBytes>=MAX_ARCHIVE_BYTES){
             attachment.file_recovery_status="archive_size_limit";break;
           }
-          const response=await getDocumentBytes(candidate,attachment.filename);
+          const cacheKey=candidate.url+"|"+(attachment.filename||"");
+          let response=documentFetchCache.get(cacheKey);
+          if(!response){
+            attachmentFetchAttempts++;
+            response=await getDocumentBytes(candidate,attachment.filename);
+            documentFetchCache.set(cacheKey,response);
+          }
           if(!response.bytes){
             attachment.file_recovery_status=response.error||"unavailable";continue;
           }
