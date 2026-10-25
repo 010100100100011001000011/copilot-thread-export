@@ -1214,8 +1214,10 @@
     // The ONLY user interaction happens at the end.
     const first=ask("Confirm thread START date",dates[0]?.slice(0,10));
     const last=ask("Confirm thread END date",dates.at(-1)?.slice(0,10));
-    const unresolved=sorted.flatMap(r=>(r.attachments||[]).filter(a=>!a.image_data_uri)
-      .map(a=>({position:r.position,filename:a.filename||null,type:a.kind||"unknown"})));
+    const unresolved=sorted.flatMap(r=>(r.attachments||[])
+      .filter(a=>!a.image_data_uri&&!a.file_binary_key)
+      .map(a=>({position:r.position,filename:a.filename||null,
+        type:a.kind||"unknown",reason:a.file_recovery_status||"unavailable"})));
     const embedded=sorted.reduce((n,r)=>n+(r.attachments||[]).filter(a=>a.image_data_uri).length,0);
     // A project may attach the same source set to EACH user turn. Repeated
     // 3-file UI counters are observations, not evidence of 30 unique files.
@@ -1228,7 +1230,7 @@
           if(!groupedRefs.has(key)){
             const group={filename:null,position:r.position,type:"file_group",
               declared_files_per_observation:count,observed_message_positions:[],
-              preview_embedded:false,original_file_verified:false,
+              preview_embedded:false,binary_saved_for_zip:false,original_file_verified:false,
               uniqueness_unverified:true};
             groupedRefs.set(key,group);inventory.push(group);
           }
@@ -1238,7 +1240,7 @@
         }else inventory.push({
           filename:a.filename||null,position:r.position,
           type:a.kind||"unknown",preview_embedded:!!a.image_data_uri,
-          original_file_verified:false
+          binary_saved_for_zip:!!a.file_binary_key,original_file_verified:false
         });
       }
     }
@@ -1316,7 +1318,9 @@
           'These may be recurring project-context references; the number of distinct documents is unknown. '+
           'File content NOT embedded.</li>';
         return '<li><b>'+htmlEscape(a.filename||"Unnamed file")+'</b> — position '+htmlEscape(a.position)+
-          (a.preview_embedded?' — image saved in HTML; verify visually':' — original NOT embedded; save separately')+'</li>';
+          (a.preview_embedded?' — image saved in HTML; verify visually':
+           a.binary_saved_for_zip?' — verified document bytes available in optional ZIP':
+           ' — original NOT recovered automatically; save separately')+'</li>';
       }).join('')+'</ol>':
       '<p>No identified named files. This is not proof that no external files exist.</p>';
     const notice='<section style="border:2px solid #b80;padding:18px;background:#fff9ec">'+
