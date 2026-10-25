@@ -25,21 +25,54 @@
   const outsideKeys=new WeakMap();let outsideSerial=0;let outsideConsolidated=false;
   const outsideSnapshots=[];
   const startMs=Date.now();
-  const titleCacheKey="copilotArchiveTitle:"+location.origin+location.pathname;
+  // A conversation can be moved between Projects. The thread UUID is more
+  // stable than its parent navigation pathname.
+  const conversationId=(location.href.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)||[])[0]?.toLowerCase()||null;
+  const titleCacheKey="copilotArchiveTitle:"+location.origin+(conversationId||location.pathname);
   function getChatTitle(){
     const selectors=['[data-testid="conversation-title"]','[data-testid="chat-title"]','[data-testid="thread-title"]'];
     for(const sel of selectors)for(const n of document.querySelectorAll(sel)){
       const t=(n.getAttribute("title")||n.innerText||"").trim();
       if(t.length>3&&t.length<240&&!/^(Copilot|Chat|Blocchi appunti|Notes|Notebooks)$/i.test(t))return {value:t,source:sel};
     }
-    for(const a of document.querySelectorAll('a[href]')){
-      let u;try{u=new URL(a.getAttribute("href"),location.href)}catch{continue}
-      if(u.origin!==location.origin||u.pathname!==location.pathname||u.pathname==="/")continue;
-      const label=(a.getAttribute("title")||a.getAttribute("aria-label")||a.innerText||"").trim();
-      if(label.length>3&&label.length<180&&!/^(Copilot|Blocchi appunti)$/i.test(label))return {value:label,source:"matching_conversation_link"};
+    const validTitle=t=>t.length>3&&t.length<180&&
+      !/^(Copilot|Chat|Blocchi appunti|Notes|Notebooks|Auto|Microsoft Copilot)$/i.test(t);
+    // Conversation links inside Project navigation can have a different URL
+    // shape from the currently open chat. Compare stable conversation IDs.
+    for(const a of document.querySelectorAll('a[href],[data-conversation-id],[data-thread-id]')){
+      const raw=[a.getAttribute("href"),a.getAttribute("data-conversation-id"),
+        a.getAttribute("data-thread-id")].filter(Boolean).join(" ");
+      if(!raw)continue;
+      let same=false;
+      if(conversationId)same=raw.toLowerCase().includes(conversationId);
+      else if(a.matches('a[href]')){
+        try{const u=new URL(a.getAttribute("href"),location.href);
+          same=u.origin===location.origin&&u.pathname===location.pathname&&u.pathname!=="/";
+        }catch{}
+      }
+      if(!same)continue;
+      const label=(a.getAttribute("title")||a.getAttribute("aria-label")||
+        a.innerText||"").trim();
+      if(validTitle(label))return {value:label,source:"matching_thread_id_in_navigation"};
     }
+    // Some Project sidebars use selected treeitems rather than regular links.
+    // Only trust a selected item marked as an actual conversation.
+    for(const el of document.querySelectorAll(
+      '[role="treeitem"][aria-selected="true"],[role="option"][aria-selected="true"]')){
+      const parent=el.closest('[data-testid*="conversation"],[data-testid*="thread"]');
+      if(!parent)continue;
+      const title=(el.getAttribute("title")||el.getAttribute("aria-label")||el.innerText||"").trim();
+      if(validTitle(title))return {value:title,source:"selected_project_conversation"};
+    }
+    // A specific browser-tab title is useful when Copilot doesn't expose
+    // the sidebar. Generic product titles must never become chat names.
+    const tabTitle=(document.title||"").replace(/\s+(?:[-|—])\s+(?:Microsoft\s+)?Copilot(?:\s*.*)?$/i,"").trim();
+    if(validTitle(tabTitle)&&tabTitle!==document.title&&
+       !/^(Microsoft|Copilot|Project|Progetto|Proyecto)$/i.test(tabTitle))
+      return {value:tabTitle,source:"specific_browser_tab_title"};
     try{
-      const previous=sessionStorage.getItem(titleCacheKey);
+      const previous=sessionStorage.getItem(titleCacheKey)||
+        sessionStorage.getItem("copilotArchiveTitle:"+location.origin+location.pathname);
       if(previous&&previous.trim().length>2)
         return {value:previous.trim(),source:"confirmed_same_conversation_this_tab"};
     }catch{}
@@ -1018,7 +1051,8 @@
       unpositioned_system_events:systemRows.filter(x=>!x.position).length,
       context_events_observed_without_index:c.stable_unindexed_context_count,
       context_position_association_verified:
-        sorted.filter(x=>x.role==="context").every(x=>valid(x.position)),
+        sorted.filter(x=>x.role==="context").every(x=>valid(x.position)&&!x.position_is_inferred),
+      context_sequence_accounted_for:sorted.filter(x=>x.role==="context").every(x=>valid(x.position)),
       inferred_context_positions:sorted.filter(x=>
         x.role==="context"&&x.position_is_inferred).map(x=>x.position),
       steps:step,scans,mutations,started_at:start,exported_at:new Date().toISOString(),
