@@ -373,14 +373,22 @@
     if(!uri)return src;
     const key=imageKey(uri);
     if(optimizedMedia.has(key))return optimizedMedia.get(key);
-    originalMedia.set(key,uri); // retained separately; HTML receives preview only
-    if(!/^data:image\/(?:jpeg|webp);base64,/i.test(uri)){optimizedMedia.set(key,uri);return uri;}
+    // The ZIP copy is captured BEFORE any resize/re-encode, including PNG.
+    originalMedia.set(key,uri);
+    const match=uri.match(/^data:image\/(jpeg|webp|png);base64,/i);
+    if(!match){optimizedMedia.set(key,uri);return uri;}
+    const format=match[1].toLowerCase();
     const result=await new Promise(resolve=>{
       const image=new Image();
       image.onload=()=>{
-        const maxSide=1600;
-        const scale=Math.min(1,maxSide/Math.max(image.naturalWidth,image.naturalHeight));
-        if(scale===1){resolve(uri);return;}
+        const maxSide=1600,scale=Math.min(1,maxSide/Math.max(
+          image.naturalWidth,image.naturalHeight));
+        const needsResize=scale<1;
+        // Small PNG diagrams keep exact pixels; large PNG diagrams are
+        // resized as PNG without dropping transparency or sharp edges.
+        const recompress=needsResize||
+          (format!=="png"&&uri.length>350000);
+        if(!recompress){resolve(uri);return;}
         try{
           const canvas=document.createElement("canvas");
           canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));
@@ -388,8 +396,11 @@
           const ctx=canvas.getContext("2d");
           ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
           ctx.drawImage(image,0,0,canvas.width,canvas.height);
-          const compressed=canvas.toDataURL("image/jpeg",0.85);
-          resolve(compressed.length<uri.length?compressed:uri);
+          const mime=format==="png"?"image/png":
+            format==="webp"?"image/webp":"image/jpeg";
+          const compressed=canvas.toDataURL(mime,0.85);
+          // Pixel ceiling always wins; otherwise keep the smaller encoding.
+          resolve(needsResize||compressed.length<uri.length?compressed:uri);
         }catch{resolve(uri);}
       };
       image.onerror=()=>resolve(uri);image.src=uri;
