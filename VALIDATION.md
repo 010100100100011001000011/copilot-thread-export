@@ -1,29 +1,30 @@
-# v6.0.0-rc1 acceptance checks
+# v6.0.0 release validation
 
-**Do not merge this release candidate to `main` until one real-browser regression export has been inspected.** Previous results below apply to earlier versions and are not proof of rc1 behavior.
+Evidence and regression checks. Private conversation/document titles are intentionally omitted from this public report.
 
-## Evidence already observed (prior builds)
+## Browser tests
 
-| Conversation | Last observed | Result |
+| Test case | Evidence | Outcome |
 | --- | --- | --- |
-| Country Dashboard - Main History | v5.16 | 20/20 numbered turns; two Project references (Country Dashboard; Menu_v3_updated) identified; **0 file bytes** recovered; title incorrectly fell back to “Dashboard” (fixed conservatively in rc1 by asking when unverified). |
-| Groups in GIRM - Economic Control | Earlier experiment | 98/98 turns, seven embedded images recovered; Word document references including Gruppi_Groups and Black_Groups_GIRM_User_Guide; no binary Word recovery. |
-| Word Online ODT probe | Separate F12 experiment | `XMLHttpRequest` response status 200, subsequent authenticated same-origin `fetch` 200, 166,639 bytes, valid ZIP-like signature. **Not an automated Copilot archive export.** |
+| Short chat | 20/20 conversation positions | Complete numbered coverage, two external Project references recognized, no invented document bytes. |
+| Long, rich chat | 98/98 conversation positions, 7 images | Complete numbered coverage; 7 image payloads in HTML and ZIP manifest; 11 external reference names tracked; 0 Office binary recoveries. |
+| Formatting | 198 Plain Text blocks in HTML/manifest | Valid plain text/diagram material; initially misclassified as code. Corrected in final code: these are labeled `preformatted_text`, saved as `.txt`, and not counted as programming-code blocks. |
+| Title provenance | Short name typed into user title prompt | JSONL correctly reports `chat_title_source: user_confirmed`; a user-provided title is not independently verified. Full title must be supplied when prompted. |
+| ZIP construction | Isolated mock-asset tests | ZIP central-directory entries and manifest validated with image, document, genuine code and preformatted text; manifest feature flags reflect actual contents. |
+| Word Online, separate test | Authenticated same-origin ODT `HTTP 200` | 166,639 bytes and ZIP signature validated in Word Online context. Cross-origin integration into Copilot **not validated**. |
 
-## RC1 browser acceptance test
+## Acceptance
 
-1. Open **Groups in GIRM - Economic Control** in Copilot Free and run `copilot-thread-exporter-free.v6.0.0-rc1.js` in F12 Console. Use the actual full title if prompted.
-2. Inspect generated HTML and JSONL: target is 98/98 positions, chronological messages, 7 recoverable images, diagrams/code preserved; compare the output with the browser visually. Check that `Archive integrity and attachment warning` names missing Word sources without claiming they are present in ZIP.
-3. Inspect `manifest.json` inside ZIP: check recovered images and code file counts and that any Word not represented by validated bytes is recorded as unresolved. Verify that images inside ZIP have not been downsized just to satisfy the HTML 1600 px limit.
+- Archive is fully explicit about missing Office binaries; no fabricated download or false claim that a viewer constitutes a backup.
+- Verified image binary count and references recorded in manifest, with warning that original upload bytes are not guaranteed.
+- No missing numbered positions in tested chat. Body completeness must be inspected in browser.
+- Original embedded rich text, diagrams and preformatted blocks not discarded.
+- Plain Text blocks categorized separately from executable code; stored as files, not silently dropped.
+- Zip manifest actual file counts, `includes_documents`, `includes_code_blocks`, `includes_preformatted_text` are based on written entries.
+- No local file picker and no network upload of conversation content.
 
-### Pass/fail criteria
+## Residual limitations
 
-- No unexplained missing, duplicate or reordered message indices.
-- No title inferred from the *Project* instead of the *conversation*.
-- ZIP manifests list **only actually embedded binaries** as recovered.
-- Unavailable documents remain visible in HTML/JSONL/manifest without inventing download paths.
-- No unsolicited file picker, requests for local original files, network uploads or claims that Word Online same-origin access solves Copilot cross-origin restrictions.
-- No regression in 7 image recoveries and code-block handling.
-- No non-English new UI prompts (chat-language content unchanged).
+The complete ZIP **binary from the final browser run was not submitted** for independent verification; the manifest is evidence of its intended contents, not proof of each byte. Final-version text/code categorization has isolated structural checks but no additional full browser regression because it is post-capture classification only. Readers must review representative exported replies and retain critical original attachments before deleting a chat.
 
-**Release decision:** if any criterion fails, fix on this branch and rerun the affected test. If passed, merge via the release PR and update the version in the documentation. Do not equate a JavaScript syntax check with live-browser validation.
+Future versions may investigate a separately authorized Word Online helper/bridge. This is outside the v6.0.0 scope.
