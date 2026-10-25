@@ -487,6 +487,14 @@
         /epub\+zip/.test(m)?"epub":/application\/zip/.test(m)?"zip":null;
       if(guessed)return {ok:true,kind:guessed,inferred_filename:"document."+guessed};
     }
+    if(!bytes.slice(0,4096).some(v=>v===0)){
+      const textMime=/^(?:text\/plain)(?:;|$)/.test(m)?"txt":
+        /^(?:text\/csv)(?:;|$)/.test(m)?"csv":
+        /^(?:application\/json)(?:;|$)/.test(m)?"json":
+        /^(?:application|text)\/(?:javascript|x-javascript)(?:;|$)/.test(m)?"js":
+        /^(?:application|text)\/xml(?:;|$)/.test(m)?"xml":null;
+      if(textMime)return {ok:true,kind:textMime,inferred_filename:"document."+textMime};
+    }
     return {ok:false,reason:"No independently validated document file signature"};
   }
   function candidateFileName(raw,disposition){
