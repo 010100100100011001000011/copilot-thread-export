@@ -476,8 +476,17 @@
       return {ok:!containsNul,kind:ext,reason:"text extension has binary data"};
     }
     if(pdf)return {ok:true,kind:"pdf",inferred_filename:"document.pdf"};
-    if(zip&&/application\/(?:vnd\.openxmlformats|zip|epub\+zip)|opendocument/i.test(mime||""))
-      return {ok:true,kind:"zip",inferred_filename:"document.zip"};
+    const m=String(mime||"").toLowerCase();
+    if(zip){
+      const guessed=/wordprocessingml|ms-word\.document|word\.document/.test(m)?"docx":
+        /spreadsheetml|ms-excel\.sheet|excel\.sheet/.test(m)?"xlsx":
+        /presentationml|ms-powerpoint\.presentation|powerpoint\.presentation/.test(m)?"pptx":
+        /opendocument\.text/.test(m)?"odt":
+        /opendocument\.spreadsheet/.test(m)?"ods":
+        /opendocument\.presentation/.test(m)?"odp":
+        /epub\+zip/.test(m)?"epub":/application\/zip/.test(m)?"zip":null;
+      if(guessed)return {ok:true,kind:guessed,inferred_filename:"document."+guessed};
+    }
     return {ok:false,reason:"No independently validated document file signature"};
   }
   function candidateFileName(raw,disposition){
@@ -568,6 +577,37 @@
   }
 
 
+  async function recoverSourceReferences(){
+    // Sources without downloadable resource URLs stay in the manifest only.
+    // Do NOT use undocumented Microsoft APIs or fabricate download routes.
+    for(const [key,item] of sourceObservations){
+      item.recovery_status="reference_only";
+      if(!item.file_source_candidates?.length)continue;
+      for(const candidate of item.file_source_candidates.slice(0,4)){
+        if(attachmentFetchAttempts>=12||Date.now()-docFetchStarted>26000){
+          item.recovery_status="download_time_budget";break;
+        }
+        attachmentFetchAttempts++;
+        const filename=validAttachmentFilename(item.title)?item.title:null;
+        const result=await getDocumentBytes(candidate,filename);
+        if(!result.bytes){item.recovery_status=result.error||"unavailable";continue;}
+        if(recoveredDocumentBytes+result.bytes.length>MAX_ARCHIVE_BYTES){
+          item.recovery_status="archive_size_limit";break;
+        }
+        const base=String(item.title).replace(/[\\/:"*?<>|\x00-\x1f]/g,"_")
+          .trim().slice(0,90)||"referenced_document";
+        const detectedExt=fileExtension(result.name)||result.kind||"bin";
+        const outname=validAttachmentFilename(base)?base:base+"."+detectedExt;
+        sourceDocuments.set(key,{bytes:result.bytes,filename:outname,
+          title:item.title,positions:item.positions,content_type:result.content_type,
+          method:"copilot_sources_panel_resource"});
+        item.recovery_status="bytes_verified_for_zip";
+        item.bytes=result.bytes.length;item.bytes_recovered=true;
+        recoveredDocumentBytes+=result.bytes.length;
+        break;
+      }
+    }
+  }
   // Export actual fenced/code-editor blocks as editable files in ZIP.
   // Do not reinterpret ordinary chat prose or inline snippets as code files.
   function collectCodeFiles(sorted){
@@ -656,6 +696,14 @@
           note:"File content downloaded from browser-visible attachment resource"});
       }
     }
+    for(const entry of sourceDocuments.values()){
+      const name=uniquePath("sources",entry.filename);
+      entries.push({name,bytes:entry.bytes});
+      catalog.push({position:null,source_positions:entry.positions,
+        name,bytes:entry.bytes.length,kind:"document",source:"copilot_sources_panel",
+        original_file_verified:false,
+        note:"Document obtained from a browser-visible Copilot citation resource"});
+    }
     for(const code of codeFiles){
       const name=uniquePath("position_"+code.position+"/code",code.filename);
       entries.push({name,bytes:code.bytes});
@@ -672,6 +720,9 @@
       html_image_max_side_px:1600,html_jpeg_quality:0.85,
       original_image_fidelity_guaranteed:false,
       captured_entries:catalog,
+      unresolved_sources:[...sourceObservations.values()].filter(x=>!x.bytes_recovered)
+        .map(x=>({title:x.title,positions:x.positions,
+          reason:x.recovery_status||"No accessible binary resource"})),
       unresolved_attachment_names:sorted.flatMap(r=>(r.attachments||[])
         .filter(a=>!a.image_data_uri&&!a.file_binary_key).map(a=>({
           position:r.position,name:a.filename||null,
@@ -1315,7 +1366,12 @@
     const sorted=[...records.values(),...systemRows].sort((a,b)=>
       orderKey(a)-orderKey(b)||(a.first_seen_scan||0)-(b.first_seen_scan||0));
     await recoverDocumentAttachments(sorted);
+    await recoverSourceReferences();
     collectCodeFiles(sorted);
+    const sourceInventory=[...sourceObservations.values()].map(x=>({
+      title:x.title,positions:x.positions,bytes_recovered:!!x.bytes_recovered,
+      status:x.recovery_status||"reference_only",bytes:x.bytes||null
+    }));
     const dates=sorted.map(x=>x.message_timestamp).filter(Boolean).sort();
     // The ONLY user interaction happens at the end.
     const first=ask("Confirm thread START date",dates[0]?.slice(0,10));
@@ -1388,6 +1444,9 @@
       external_links_found:externalLinks.size,
       external_links_not_downloaded:[...externalLinks.values()],
       images_embedded:embedded,
+      sources_panel_references:sourceInventory,
+      sources_documents_recovered:sourceDocuments.size,
+      exportable_code_blocks:codeFiles.length,
       document_bytes_recovered:recoveredDocumentBytes,
       documents_recovered:recoveredDocuments.size,
       document_files_unavailable:sorted.flatMap(r=>(r.attachments||[])
@@ -1429,10 +1488,18 @@
            ' — original NOT recovered automatically; save separately')+'</li>';
       }).join('')+'</ol>':
       '<p>No identified named files. This is not proof that no external files exist.</p>';
+    const sourcesHTML=sourceInventory.length?
+      '<h3>Documents cited in Copilot Sources</h3><ol>'+
+      sourceInventory.map(x=>'<li><b>'+htmlEscape(x.title)+'</b> — '+
+        (x.bytes_recovered?'binary recovered for ZIP':
+          'reference only; original file unavailable')+
+        ' (message positions '+htmlEscape(x.positions.join(", "))+')</li>').join('')+'</ol>':
+      '<p>No document references captured from Sources panels; this does not prove none exist.</p>';
     const notice='<section style="border:2px solid #b80;padding:18px;background:#fff9ec">'+
       '<h2>Archive integrity and attachment warning</h2>'+
       '<p><b>Chat title:</b> '+htmlEscape(userTitle||"Could not detect automatically")+'</p>'+
       '<h3>Identified files — individually check before deletion</h3>'+filesList+
+      sourcesHTML+
       '<p><b>External links not downloaded:</b> '+externalLinks.size+
       '. These may be ordinary websites, documents, image sources or permission-restricted services.</p>'+
       '<p><b>Total recovery time:</b> '+htmlEscape(elapsed)+'</p>'+
