@@ -686,7 +686,7 @@
         const name=uniquePath("position_"+record.position,label);
         entries.push({name,bytes});
         catalog.push({position:record.position,name,bytes:bytes.length,
-          original_file_verified:false,
+          kind:"image",original_file_verified:false,
           note:"Bytes recovered from browser image, may be preview/reencoded"});
       }
     }
@@ -772,7 +772,7 @@
     end.v.setUint16(8,entries.length,true);end.v.setUint16(10,entries.length,true);
     end.v.setUint32(12,centralSize,true);end.v.setUint32(16,offset,true);
     return {blob:new Blob([...chunks,...central,end.a],{type:"application/zip"}),
-      images:catalog.filter(x=>x.kind!=="document").length,
+      images:catalog.filter(x=>x.kind==="image").length,
       documents:catalog.filter(x=>x.kind==="document").length,
       codes:catalog.filter(x=>x.kind==="code").length,
       missing:sorted.reduce((n,r)=>n+(r.attachments||[]).filter(a=>!a.image_data_uri&&!a.file_binary_key).length,0),
