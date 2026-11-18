@@ -696,7 +696,7 @@
     }
   }
 
-  async function zipFromRecoveredMedia(sorted){
+  async function zipFromRecoveredMedia(sorted,conversationFiles=null){
     const encoder=new TextEncoder(),entries=[],catalog=[],usedNames=new Set();
     const uniquePath=(folder,filename)=>{
       let safe=normalizedName(filename),path=folder+"/"+safe,n=1;
@@ -806,7 +806,12 @@
         kind:"code",language:code.language,partial:code.partial,
         note:code.note});
     }
+    if(conversationFiles){
+      entries.push({name:"conversation.html",bytes:encoder.encode(conversationFiles.html)});
+      entries.push({name:"conversation.jsonl",bytes:encoder.encode(conversationFiles.jsonl)});
+    }
     const manifest=encoder.encode(JSON.stringify({
+      conversation_files_in_zip:!!conversationFiles,
       description:"Offline archive of conversation files. Optional separately labeled Project-context references included only with explicit user consent.",
       project_context_inclusion_requested:sourceDocuments.size>0||
         [...sourceObservations.values()].some(x=>x.recovery_status!=="project_context_reference_not_included"),
@@ -1739,17 +1744,19 @@
         '</article>').join("\n")+'<footer style="margin:38px 0 15px;border-top:1px solid #bbb;padding-top:12px;color:#555;font-size:12px;text-align:center">A service by &copy; <a href="https://github.com/010100100100011001000011" rel="noopener noreferrer" target="_blank"><strong>Teclive</strong></a> that makes your life easier.</footer></body></html>';
     const stamp=new Date().toISOString().replace(/[:.]/g,"-");
     console.log("[v6.0.1] EXPORT RESULT",meta);
-    download(html,"text/html;charset=utf-8","copilot-v6.0.1_"+stamp+".html");
-    await wait(850);
-    download(jsonl,"application/x-ndjson;charset=utf-8","copilot-v6.0.1_"+stamp+".jsonl");
+    if(!extensionMode){
+      download(html,"text/html;charset=utf-8","copilot-v6.0.1_"+stamp+".html");
+      await wait(850);
+      download(jsonl,"application/x-ndjson;charset=utf-8","copilot-v6.0.1_"+stamp+".jsonl");
+    }
     if(extensionMode || originalMedia.size||recoveredDocuments.size||sourceDocuments.size||codeFiles.length||
        sorted.some(r=>(r.attachments||[]).length)){
       const save=extensionMode||confirm(includeProjectContext?
         "Save optional ZIP with all recoverable chat files PLUS accessible Project-context files in a separate project_context/ folder?":
         UI.zipConfirm);
       if(save){
-        const archived=await zipFromRecoveredMedia(sorted);
-        downloadBlob(archived.blob,"copilot-v6.0.1_"+stamp+"_attachments.zip");
+        const archived=await zipFromRecoveredMedia(sorted,extensionMode?{html,jsonl}:null);
+        downloadBlob(archived.blob,"copilot-v6.0.1_"+stamp+(extensionMode?"_complete.zip":"_attachments.zip"));
         console.log("[extension] ZIP",archived.images,"images,",archived.documents,
           "documents,",archived.codes,"runnable code files,",archived.missing,"unavailable references");
       }
