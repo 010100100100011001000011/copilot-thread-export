@@ -836,6 +836,7 @@
         .map(x=>({title:x.title,positions:x.positions,
           reason:x.recovery_status||"No accessible binary resource",
           alternative_format_in_zip:x.odt_alternative_zip_path||null,
+          ui_action_hint:x.ui_action_hint||null,
           source_file_identity_verified:false})),
       unresolved_attachment_names:sorted.flatMap(r=>(r.attachments||[])
         .filter(a=>!a.image_data_uri&&!a.file_binary_key).map(a=>({
@@ -1322,6 +1323,22 @@
       const card=el.closest('a,button,[role="button"],[role="listitem"],li')||
         el.parentElement?.parentElement||el.parentElement||el;
       const candidates=fileCandidates(card);
+      // Read-only actionability diagnostics for future Office UI automation.
+      // Never record signed hrefs, WOPI tokens, cookies or complete DOM HTML.
+      const uiPath=[];
+      let node=el;
+      for(let depth=0;node&&node!==dialog&&depth<7;depth++,node=node.parentElement){
+        const role=node.getAttribute("role")||null,tag=node.tagName.toLowerCase();
+        const hasHref=node.tagName==="A"&&node.hasAttribute("href");
+        const clickable=tag==="button"||hasHref||role==="button"||role==="link"||
+          node.hasAttribute("onclick")||node.getAttribute("tabindex")==="0";
+        const cursorPointer=getComputedStyle(node).cursor==="pointer";
+        if(clickable||cursorPointer||node.hasAttribute("data-testid")){
+          uiPath.push({depth,tag,role,clickable,cursor_pointer:cursorPointer,
+            has_href:hasHref,
+            data_testid:(node.getAttribute("data-testid")||"").slice(0,80)||null});
+        }
+      }
       if(!sourceObservations.has(key)){
         sourceObservations.set(key,{
           title,positions:[],file_source_candidates:[],
@@ -1329,6 +1346,9 @@
           note:"Source title visible in Copilot; downloading its file may be unavailable"});
       }
       const item=sourceObservations.get(key);
+      if(!item.ui_action_hint)item.ui_action_hint={controls:uiPath.slice(0,5),
+        has_direct_file_candidates:candidates.length>0,
+        classification:"visible_reference_only_not_verified_downloadable_file"};
       if(!item.positions.includes(position))item.positions.push(position);
       for(const cand of candidates){
         if(!item.file_source_candidates.some(x=>x.url===cand.url))
@@ -1559,7 +1579,8 @@
       title:x.title,positions:x.positions,scope:"project_context_not_chat_attachment",
       included_by_user_choice:includeProjectContext,
       bytes_recovered:!!x.bytes_recovered,
-      status:x.recovery_status||"reference_only",bytes:x.bytes||null
+      status:x.recovery_status||"reference_only",bytes:x.bytes||null,
+      ui_action_hint:x.ui_action_hint||null
     }));
     const unresolved=sorted.flatMap(r=>(r.attachments||[])
       .filter(a=>!a.image_data_uri&&!a.file_binary_key)
