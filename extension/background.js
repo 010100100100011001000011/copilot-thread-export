@@ -3,7 +3,18 @@
   'use strict';
   const accepted = /^https:\/\/(?:copilot\.microsoft\.com|(?:www\.)?copilot\.com)(?::443)?(?:\/|$)/i;
   chrome.runtime.onInstalled.addListener(() => chrome.storage.local.set({captureEnabled:false}));
-  chrome.runtime.onStartup.addListener(() => chrome.storage.local.set({captureEnabled:false}));
+  chrome.runtime.onStartup.addListener(async () => {
+    const {archiveJobV020}=await chrome.storage.local.get('archiveJobV020');
+    await chrome.storage.local.set({captureEnabled:false,
+      ...(archiveJobV020?.state==='running'?{archiveJobV020:{...archiveJobV020,
+        state:'failed',error:'Browser restarted during export.'}}:{})});
+  });
+  chrome.tabs.onRemoved.addListener(async tabId => {
+    const {archiveJobV020}=await chrome.storage.local.get('archiveJobV020');
+    if(archiveJobV020?.state==='running'&&archiveJobV020.tabId===tabId)
+      await chrome.storage.local.set({archiveJobV020:{...archiveJobV020,state:'failed',
+        error:'Copilot tab closed during export.'},captureEnabled:false});
+  });
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     if(msg?.type === 'COPILOT_ARCHIVE_V020_START'){
       (async () => {
@@ -18,6 +29,8 @@
         // even after the popup closes. The tab must remain open.
         chrome.scripting.executeScript({target:{tabId:id},files:['copilot-exporter-extension.v0.2.js'],world:'ISOLATED'})
           .then(async () => {
+            // Allow the final status message to reach storage before judging failure.
+            await new Promise(resolve=>setTimeout(resolve,2000));
             const job=(await chrome.storage.local.get('archiveJobV020')).archiveJobV020;
             if(job?.state === 'running')await chrome.storage.local.set({archiveJobV020:{...job,state:'failed',error:'Exporter returned without a completion signal.'},captureEnabled:false});
           }).catch(async error=>{
