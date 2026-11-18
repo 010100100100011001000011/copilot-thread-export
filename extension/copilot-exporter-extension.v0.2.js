@@ -1,13 +1,11 @@
 /**
- * Copilot Free Thread Exporter v6.0.1 (stable)
- * Stable scope: HTML/JSONL chronology + offline browser-recovered images,
- * code blocks, accessible chat attachments, and provenance/integrity records.
- * WORD ONLINE FILES: same-origin ODT byte recovery was tested separately,
- * but no cross-origin integration into the Copilot ZIP has been validated.
- * Do not claim externally opened Word/OneDrive files are backed up.
- * Paste into copilot.com F12 Console. Browser-only, no private APIs.
- * Two full directional scans, gap recovery, attachment-aware user turns.
- * Never upload conversation data. Browser download permissions still apply.
+ * Copilot Free Thread Exporter v6.0.1 — extension integration v0.2 (EXPERIMENTAL)
+ * Run only in the isolated world of the local one-click Chromium extension.
+ * One ZIP contains conversation.html, conversation.jsonl, browser-recovered
+ * attachments and locally captured ODT alternatives, plus manifest.json.
+ * This does NOT yet open/download arbitrary Word Online references unattended.
+ * ODT association by normalized title does NOT verify source file identity.
+ * Bounded traversal, explicit partial archive status. No network backend.
  */
 (async () => {
   "use strict";
@@ -812,6 +810,10 @@
     }
     const manifest=encoder.encode(JSON.stringify({
       conversation_files_in_zip:!!conversationFiles,
+      conversation_capture_status:conversationFiles?.status||null,
+      conversation_missing_position_count:conversationFiles?.missing_positions||0,
+      conversation_start_verified:conversationFiles?.start_verified||false,
+      export_time_budget_exceeded:conversationFiles?.budget_exceeded||false,
       description:"Offline archive of conversation files. Optional separately labeled Project-context references included only with explicit user consent.",
       project_context_inclusion_requested:sourceDocuments.size>0||
         [...sourceObservations.values()].some(x=>x.recovery_status!=="project_context_reference_not_included"),
@@ -1606,7 +1608,7 @@
     const elapsed=Math.floor(duration/60000)+" min "+((duration%60000)/1000).toFixed(1)+" s";
     const contextUnnumbered=c.missing.length>0&&c.missing.length===c.unpositioned_events;
     const meta={
-      exporter_version:"6.0.1",status:!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":contextUnnumbered?"CONTEXT_EVENTS_OBSERVED_POSITIONS_UNVERIFIED":"PARTIAL",
+      exporter_version:extensionMode?"6.0.1+extension.0.2.0":"6.0.1",status:exportStoppedAtBudget?"PARTIAL_TIME_BUDGET":!startVerified?"START_UNVERIFIED":c.expected&&c.missing.length===0?"POSITIONS_COMPLETE_CONTENT_UNVERIFIED":contextUnnumbered?"CONTEXT_EVENTS_OBSERVED_POSITIONS_UNVERIFIED":"PARTIAL",
       chat_title:userTitle,chat_title_source:chatTitle.value?chatTitle.source:(userTitle?"user_confirmed":"unavailable"),
       expected_positions:c.expected,captured_positions:c.positioned,missing_positions:c.missing,
       historical_elements_exported:sorted.length,
@@ -1704,6 +1706,7 @@
       sourcePanelOpens+'; containers detected: '+sourcePanelsVisible+
       '. This is a detection failure or missing accessible markup, NOT proof there were no files.</p>';
     const notice='<section style="border:2px solid #b80;padding:18px;background:#fff9ec">'+
+      (extensionMode?'<p><b>Extension integration:</b> A single ZIP contains this HTML and JSONL. Previously authorized Word Online ODT conversions MAY be included in that ZIP only on a title match. Refer to ZIP manifest; HTML/JSONL metadata cannot certify those alternative files.</p>':'')+
       '<h2>Archive integrity and attachment warning</h2>'+
       '<p><b>Chat title:</b> '+htmlEscape(userTitle||"Could not detect automatically")+'</p>'+
       '<h3>Identified files — individually check before deletion</h3>'+filesList+
@@ -1755,7 +1758,7 @@
         "Save optional ZIP with all recoverable chat files PLUS accessible Project-context files in a separate project_context/ folder?":
         UI.zipConfirm);
       if(save){
-        const archived=await zipFromRecoveredMedia(sorted,extensionMode?{html,jsonl}:null);
+        const archived=await zipFromRecoveredMedia(sorted,extensionMode?{html,jsonl,status:meta.status,missing_positions:c.missing.length,start_verified:startVerified,budget_exceeded:exportStoppedAtBudget}:null);
         downloadBlob(archived.blob,"copilot-v6.0.1_"+stamp+(extensionMode?"_complete.zip":"_attachments.zip"));
         console.log("[extension] ZIP",archived.images,"images,",archived.documents,
           "documents,",archived.codes,"runnable code files,",archived.missing,"unavailable references");
