@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Copilot Archive</title>
+<style>body{font:13px/1.5 system-ui,Arial,sans-serif;margin:0;color:#202124;background:#fafafa;min-width:350px;max-width:500px}main{padding:17px}h1{font-size:17px;margin:0 0 11px}button{cursor:pointer;background:#174ea6;color:white;border:0;border-radius:6px;padding:10px 13px;font-weight:bold}button:disabled{opacity:.5;cursor:default}#status{white-space:pre-wrap;padding:10px;background:#eee;border-radius:5px;min-height:25px;margin-top:13px}.note{color:#595959;font-size:12px}.warning{color:#963f14;font-size:12px}</style></head><body><main>
+<h1>Copilot Thread + Office Archive <small>v0.2 beta</small></h1><p>Open a Copilot Free conversation, then press the button once. The archive is generated locally.</p>
+<button id="export">Export conversation + available files</button>
+<div id="status" role="status">Checking...</div>
+<p class="note">Outputs: HTML, JSONL and ZIP with a manifest. Previously captured Office ODTs are merged into the ZIP only on a matching visible source title.</p>
+<p class="warning">This beta does NOT yet open Word Online references or download their ODTs unattended. Missing messages/files remain marked unresolved. Do not delete originals.</p>
+<script src="popup.js"></script>
+</main></body></html>

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Copilot Thread + Office Archive (Experimental)",
+  "version": "0.2.0",
+  "description": "One-click Copilot Free HTML/JSONL/ZIP export and automatic ZIP inclusion of locally captured, filename-matched Word Online ODT files. No backend.",
+  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab"],
+  "action": {"default_title": "Export Copilot thread + available files", "default_popup": "popup.html"},
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [
+    {"matches": ["https://*.officeapps.live.com/*"], "all_frames": true, "run_at": "document_start", "world": "MAIN", "js": ["office-hook.js"]},
+    {"matches": ["https://*.officeapps.live.com/*"], "all_frames": true, "run_at": "document_start", "world": "ISOLATED", "js": ["office-relay.js"]}
+  ]
+}
