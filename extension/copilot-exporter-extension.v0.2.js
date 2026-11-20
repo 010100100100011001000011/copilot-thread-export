@@ -35,6 +35,8 @@
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
   const records=new Map(), events=[], systemMessages=new Map();
   let expected=0,step=0, scans=0, mutations=0, scheduled=false, startVerified=false;
+  const traversalStops=[];
+  let terminalServiceEndObserved=false;
   const outsideKeys=new WeakMap();let outsideSerial=0;let outsideConsolidated=false;
   const outsideSnapshots=[];
   const startMs=Date.now();
@@ -66,7 +68,7 @@
       if(!same)continue;
       const label=(a.getAttribute("title")||a.getAttribute("aria-label")||
         a.innerText||"").trim();
-      if(validTitle(label))return {value:label,source:"matching_thread_id_in_navigation"};
+      if(validTitle(label)&&!/^(?:passa al contenuto principale|skip to (?:main )?content|aller au contenu principal|ir al contenido principal)$/i.test(label))return {value:label,source:"matching_thread_id_in_navigation"};
     }
     // Selected Project treeitems and browser tab titles may describe the
     // Project (e.g. "Dashboard"), NOT the selected chat. They are not
@@ -99,7 +101,7 @@
     {id:"context_reference_stop",role:"context",
       pattern:/^(?:Le risposte smetteranno di fare riferimento|Answers will (?:stop|no longer) refer(?:ring)? to|Las respuestas dejar[aá]n de hacer referencia a|Les r[eé]ponses (?:cesseront|ne feront plus) r[eé]f[eé]rence)/i},
     {id:"service_daily_limit",role:"service",pattern:/vous avez atteint la limite quotidienne|daily (?:usage )?limit|l[ií]mite diario|limite giornalier/i},
-    {id:"service_error",role:"service",pattern:/something went wrong|une erreur s.est produite|se ha producido un error|si [eè] verificato un errore/i},
+    {id:"service_error",role:"service",pattern:/something went wrong|une erreur s.est produite|se ha producido un error|si [eè] verificato un errore|non [eè] stato possibile generare una risposta|no se pudo generar una respuesta|we (?:could not|couldn.t) generate a response|unable to generate (?:a )?response/i},
     {id:"service_quota",role:"service",pattern:/quota exceeded|rate limit|limite d.utilisation|usage limit|obtenez plus de capacit[eé]/i},
     {id:"service_moderation",role:"service",pattern:/content (?:was )?blocked|contenu bloqu[eé]|contenido bloqueado/i},
     {id:"context_date",role:"context",pattern:/^(?:ott|oct|ene|jan|feb|mar|apr|may|jun|jul|aug|sep|nov|dic|dec|gen)[a-z.]*\s+\d{1,2}(?:\s+\d{4})?$/i}
@@ -814,6 +816,8 @@
       conversation_missing_position_count:conversationFiles?.missing_positions||0,
       conversation_start_verified:conversationFiles?.start_verified||false,
       export_time_budget_exceeded:conversationFiles?.budget_exceeded||false,
+      terminal_service_end_observed:conversationFiles?.terminal_service_end_observed||false,
+      traversal_stops:conversationFiles?.traversal_stops||[],
       description:"Offline archive of conversation files. Optional separately labeled Project-context references included only with explicit user consent.",
       project_context_inclusion_requested:sourceDocuments.size>0||
         [...sourceObservations.values()].some(x=>x.recovery_status!=="project_context_reference_not_included"),
@@ -1228,7 +1232,10 @@
   function visible(){
     const p=[...list.querySelectorAll("[aria-posinset]")].map(e=>number(e,"aria-posinset")).filter(valid);
     const h=scrollHost();
-    return {min:p.length?Math.min(...p):null,max:p.length?Math.max(...p):null,top:h?h.scrollTop:list.scrollTop};
+    const top=h?h.scrollTop:list.scrollTop;
+    const bottom=h?Math.max(0,h.scrollHeight-h.clientHeight-top)<=24:
+      Math.max(0,document.documentElement.scrollHeight-window.innerHeight-window.scrollY)<=24;
+    return {min:p.length?Math.min(...p):null,max:p.length?Math.max(...p):null,top,bottom};
   }
   function edge(dir){
     const els=[...list.querySelectorAll("[aria-posinset]")].filter(e=>number(e,"aria-posinset"));
@@ -1242,8 +1249,13 @@
       const jump=Math.max(cfg.step,Math.min(950,Math.round(host.clientHeight*.9)));
       host.scrollBy({top:dir*jump,behavior:"instant"});
       if(host.scrollTop!==before)return;
+      // When physically at the end, NEVER scrollIntoView the last indexed
+      // message: it can pull the viewport above a terminal unindexed service
+      // banner, creating an endless jump/scrollIntoView oscillation.
+      const remaining=dir>0?host.scrollHeight-host.clientHeight-host.scrollTop:host.scrollTop;
+      if(remaining<=4)return;
     }
-    // Fallback for other Copilot layouts; don't require a feed.
+    // Fallback only when a detected scroll host is not yet at an edge.
     const anchor=edge(dir)||list;
     try{anchor.scrollIntoView({behavior:"instant",block:dir<0?"start":"end"});}catch{}
     for(let n=anchor;n;n=n.parentElement){
@@ -1416,22 +1428,66 @@
       if(sourceDialog())return; // Stop if unable to close an overlay
     }
   }
+    // Pure stopping rule. Only the indexed frontier (not scrollTop jitter,
+  // mutation count or total cached records) counts as directional progress.
+  // A terminal system notice is an explicit end when at the scroll boundary.
+  function forwardStopDecision({seenExpected,terminalNotice,atBottom,noIndexProgress}){
+    if(seenExpected&&noIndexProgress>=4)return "last_accessibility_index_stable";
+    if(terminalNotice&&atBottom&&noIndexProgress>=4)
+      return "terminal_service_notice_at_boundary";
+    if(noIndexProgress>=26)return "indexed_frontier_stalled";
+    return null;
+  }
+  const terminalMessagePattern=/(?:non [eè] stato possibile generare una risposta|vous avez atteint la limite quotidienne|you(?:'|’)ve reached (?:your )?(?:daily|usage) limit|(?:you have|you.ve) reached (?:the |your )?daily limit|has alcanzado (?:el|tu) l[ií]mite diario|hai raggiunto il limite giornaliero|impossibile generare una risposta|no se pudo generar una respuesta|we (?:couldn.t|could not) generate a response)/i;
+  function terminalNoticeVisible(){
+    // Exclude user quotations and offscreen notifications. Only match live
+    // system/service text, not text inside exported messages or code blocks.
+    const nodes=document.querySelectorAll(
+      '[role="alert"],[role="status"],[data-testid="copilot-message-div"],span,p');
+    for(const el of nodes){
+      if(el.matches("span,p")&&el.children.length>0)continue;
+      if(el.closest(s.user+',pre,code,[role="navigation"],nav,[contenteditable="true"]'))continue;
+      const t=(el.textContent||"").trim();
+      if(!t||t.length>650||!terminalMessagePattern.test(t))continue;
+      const r=el.getBoundingClientRect();
+      if(r.width>2&&r.height>2&&r.bottom>0&&r.top<innerHeight)return true;
+    }
+    return false;
+  }
   async function traverse(dir,label,limit=cfg.limit){
-    let still=0;
+    let noIndexProgress=0,frontier=dir>0?0:Infinity,reason="step_limit";
     for(let i=0;i<limit;i++){
-      if(budgetExpired())break;
+      if(budgetExpired()){reason="time_budget";break;}
       step++;scan(label);reconcileContextPositions();reconcileTrailingContext();
-      const before=visible(),count=records.size;
+      const before=visible();
       await harvestDeferredMedia();
       await harvestCitationSources();
       move(dir);await wait(cfg.delay);scan(label);
       reconcileContextPositions();reconcileTrailingContext();
       const after=visible();
-      const changed=before.min!==after.min||before.max!==after.max||before.top!==after.top||count!==records.size;
-      still=changed?0:still+1;
-      if(i%20===0)console.log("[v6.0.1]",label,i,coverage());
-      if(still>=cfg.stagnant)break;
+      const edgeIndex=dir>0?after.max:after.min;
+      const advanced=dir>0?
+        (Number.isInteger(edgeIndex)&&edgeIndex>frontier):
+        (Number.isInteger(edgeIndex)&&edgeIndex<frontier);
+      if(advanced){frontier=edgeIndex;noIndexProgress=0;}
+      else noIndexProgress++;
+      const service=dir>0&&terminalNoticeVisible();
+      if(service&&after.bottom)terminalServiceEndObserved=true;
+      if(dir>0){
+        const stop=forwardStopDecision({
+          seenExpected:expected>0&&after.max!==null&&after.max>=expected,
+          terminalNotice:service,atBottom:after.bottom,noIndexProgress
+        });
+        if(stop){reason=stop;break;}
+      }else if(after.min===1&&noIndexProgress>=3){reason="first_accessibility_index_stable";break;}
+      else if(noIndexProgress>=26){reason="indexed_frontier_stalled";break;}
+      if(i%20===0)console.log("[extension-v0.2] traverse",label,i,
+        {expected,min:after.min,max:after.max,noIndexProgress,atBottom:after.bottom});
     }
+    traversalStops.push({label,direction:dir,reason,
+      last_visible_min:visible().min,last_visible_max:visible().max});
+    if(reason==="indexed_frontier_stalled")
+      console.warn("[extension-v0.2] Traversal stalled; will mark uncertain coverage.",label);
     await wait(cfg.settleMs);scan(label+":settle");
   }
   async function recover(){
@@ -1691,6 +1747,8 @@
       extension_one_click_mode:extensionMode,
       export_time_budget_exceeded:exportStoppedAtBudget,
       export_time_budget_ms:extensionMode?exportBudgetMs:null,
+      traversal_stops:traversalStops,
+      terminal_service_end_observed:terminalServiceEndObserved,
       steps:step,scans,mutations,started_at:start,exported_at:new Date().toISOString(),
       elapsed_ms:duration,elapsed_human:elapsed,
       warning:"Index coverage is not a guarantee of full message bodies. Full-content fidelity checks remain necessary before deleting the source."
@@ -1728,6 +1786,7 @@
       '. This is a detection failure or missing accessible markup, NOT proof there were no files.</p>';
     const notice='<section style="border:2px solid #b80;padding:18px;background:#fff9ec">'+
       (extensionMode?'<p><b>Extension integration:</b> A single ZIP contains this HTML and JSONL. Previously authorized Word Online ODT conversions MAY be included in that ZIP only on a title match. Refer to ZIP manifest; HTML/JSONL metadata cannot certify those alternative files.</p>':'')+
+      (terminalServiceEndObserved?'<p><b>Terminal Copilot service notice observed.</b> The conversation may end with an unanswered user request or quota/error message; the exporter stopped at the observed end instead of retrying.</p>':'')+
       '<h2>Archive integrity and attachment warning</h2>'+
       '<p><b>Chat title:</b> '+htmlEscape(userTitle||"Could not detect automatically")+'</p>'+
       '<h3>Identified files — individually check before deletion</h3>'+filesList+
@@ -1779,7 +1838,7 @@
         "Save optional ZIP with all recoverable chat files PLUS accessible Project-context files in a separate project_context/ folder?":
         UI.zipConfirm);
       if(save){
-        const archived=await zipFromRecoveredMedia(sorted,extensionMode?{html,jsonl,status:meta.status,missing_positions:c.missing.length,start_verified:startVerified,budget_exceeded:exportStoppedAtBudget}:null);
+        const archived=await zipFromRecoveredMedia(sorted,extensionMode?{html,jsonl,status:meta.status,missing_positions:c.missing.length,start_verified:startVerified,budget_exceeded:exportStoppedAtBudget,terminal_service_end_observed:terminalServiceEndObserved,traversal_stops:traversalStops}:null);
         downloadBlob(archived.blob,"copilot-v6.0.1_"+stamp+(extensionMode?"_complete.zip":"_attachments.zip"));
         console.log("[extension] ZIP",archived.images,"images,",archived.documents,
           "documents,",archived.codes,"runnable code files,",archived.missing,"unavailable references");
