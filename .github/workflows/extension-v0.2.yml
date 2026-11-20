@@ -17,3 +17,15 @@ jobs:
         with:
           node-version: '22'
       - run: node tests/extension-v0.2.test.cjs
+      - name: Package installable Avast / Chromium extension
+        run: |
+          cd extension
+          zip -q -r ../copilot-avast-extension-v0.2-terminal-fix.zip .
+          unzip -t ../copilot-avast-extension-v0.2-terminal-fix.zip
+      - name: Publish tested extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: copilot-avast-extension-v0.2-terminal-fix
+          path: copilot-avast-extension-v0.2-terminal-fix.zip
+          if-no-files-found: error
+          retention-days: 30
