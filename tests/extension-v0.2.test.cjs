@@ -10,6 +10,41 @@ const {webcrypto,createHash}=require('node:crypto');
    new (require('node:vm').Script)(fs.readFileSync(path.join(dir,f),'utf8'),{filename:f});
  }
  const s=fs.readFileSync(path.join(dir,'copilot-exporter-extension.v0.2.js'),'utf8');
+ // Regression from real Avast tests: a Copilot quota/error banner at the
+ // physical end must stop the crawl, not trigger scrollIntoView oscillation.
+ const stopStart=s.indexOf('function forwardStopDecision(');
+ const stopEnd=s.indexOf('const terminalMessagePattern=',stopStart);
+ assert(stopStart>0&&stopEnd>stopStart);
+ const shouldStop=new Function(s.slice(stopStart,stopEnd)+';return forwardStopDecision;')();
+ assert.equal(shouldStop({seenExpected:true,terminalNotice:false,atBottom:false,noIndexProgress:4}),
+   'last_accessibility_index_stable');
+ assert.equal(shouldStop({seenExpected:false,terminalNotice:true,atBottom:true,noIndexProgress:4}),
+   'terminal_service_notice_at_boundary');
+ assert.equal(shouldStop({seenExpected:false,terminalNotice:true,atBottom:false,noIndexProgress:4}),null,
+   'Mid-thread service notices must not end traversal.');
+ assert.equal(shouldStop({seenExpected:false,terminalNotice:false,atBottom:true,noIndexProgress:25}),null);
+ assert.equal(shouldStop({seenExpected:false,terminalNotice:false,atBottom:true,noIndexProgress:26}),
+   'indexed_frontier_stalled');
+ const patternStart=s.indexOf('const terminalMessagePattern='), patternEnd=s.indexOf('function terminalNoticeVisible()',patternStart);
+ const terminalPattern=new Function(s.slice(patternStart,patternEnd)+';return terminalMessagePattern;')();
+ assert(terminalPattern.test('Non è stato possibile generare una risposta. Invia un nuovo prompt'));
+ assert(terminalPattern.test('Vous avez atteint la limite quotidienne. Obtenez plus de capacité'));
+ assert(!terminalPattern.test('La funzione VBA è stata aggiornata con successo.'));
+ const moveStart=s.indexOf('function move('),moveEnd=s.indexOf('// Sources/Origini',moveStart);
+ assert(moveStart>0&&moveEnd>moveStart);
+ let pulledBack=0;
+ const host={scrollTop:800,scrollHeight:1000,clientHeight:200,
+   scrollBy(){/* browser refuses scrolling past the end */}};
+ const edge=()=>({scrollIntoView(){pulledBack++;}});
+ const move=new Function('scrollHost','cfg','edge','list',
+   s.slice(moveStart,moveEnd)+';return move;')(
+   ()=>host,{step:135},edge,{scrollTop:0,scrollIntoView(){pulledBack++;}});
+ move(1);
+ assert.equal(pulledBack,0,'Do not scrollIntoView last indexed message at bottom');
+ // This same fallback was also incorrect when at physical top.
+ host.scrollTop=0;
+ move(-1);
+ assert.equal(pulledBack,0,'Do not scrollIntoView first indexed message at top');
  const start=s.indexOf('async function zipFromRecoveredMedia(');
  const end=s.indexOf('function downloadBlob(',start);
  assert(start>0&&end>start);
@@ -40,8 +75,9 @@ const {webcrypto,createHash}=require('node:crypto');
  assert.equal(manifest.conversation_capture_status,'PARTIAL');
  assert.equal(manifest.conversation_missing_position_count,3);
  assert.equal(manifest.export_time_budget_exceeded,true);
+ assert.equal(manifest.terminal_service_end_observed,false);
  assert.equal(manifest.unresolved_sources[0].alternative_format_in_zip,archivePath);
  assert.equal(manifest.captured_entries[0].original_file_verified,false);
  assert.equal(manifest.captured_entries[0].sha256,sha256);
- console.log('PASS: one ZIP with HTML+JSONL, ODT bytes, source title match and truthful PARTIAL manifest');
+ console.log('PASS: ZIP/ODT validation + terminal service boundary / no-bounce traversal regression');
 })().catch(e=>{console.error(e);process.exitCode=1});
