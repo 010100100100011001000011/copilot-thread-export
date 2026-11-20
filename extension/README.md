@@ -29,3 +29,16 @@ Static and synthetic ZIP regression: `node tests/extension-v0.2.test.cjs`. The t
 ## Explicit acceptance gate for full automation
 
 Do not label this feature complete until **one click** (after one-time installation) results in a real Copilot source opening, a real Word file being downloaded via the Office-origin integration without manual document actions, and its verified bytes appearing in the single final ZIP alongside the HTML, JSONL and an accurate provenance manifest. Test at least two distinct files and a blocked/unavailable source.
+
+## 20 Nov 2026 Avast regression: terminal service messages
+
+Observed in user screenshots: some otherwise short Copilot Free conversations end with an **unindexed service message** (Italian `Non è stato possibile generare una risposta`; French `Vous avez atteint la limite quotidienne`). The previous crawler could reach the physical bottom, then call `scrollIntoView` on the last *indexed* message, pulling the view back above the service notice. Repeated fallback scrolling could oscillate even when no new indexed message existed.
+
+Experimental fix in this branch:
+- `move(dir)` does **not** run `scrollIntoView` when the active scroll host is already at the physical boundary in that direction.
+- Forward traverse tracks only **new indexed frontier positions** as progress; scroll offsets, DOM mutations or cache-size jitter do not reset the stall counter.
+- When a recognizable terminal service notice is visible at the physical bottom, 4 moves with no new indexed position finish with reason `terminal_service_notice_at_boundary`. If the final numeric accessibility index is visible, 4 stable moves finish with `last_accessibility_index_stable`. Other stalls end by 26 no-progress moves, with an explicit diagnostic.
+- Terminal service notices are preserved and reported; a Copilot reply which was never generated cannot be recreated from the archive.
+- The exact end reason is retained in JSONL metadata and ZIP manifest. Skip-navigation UI labels such as `Passa al contenuto principale` are rejected as chat titles.
+
+Synthetic tests exercise both observed terminal phrases, the no-bounce boundary and a mid-conversation notice (which must **not** be treated as thread end). CI success alone does **not** prove the browser behavior: the fix requires a new Avast test on the real problem conversations. Other original attachment binaries still may be missing.
